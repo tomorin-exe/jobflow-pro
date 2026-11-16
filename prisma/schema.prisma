@@ -1,0 +1,35 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// 与 src/types/job.ts 中的状态字面量保持一致。
+enum JobStatus {
+  applied
+  interviewing
+  offered
+  rejected
+}
+
+// 当前没有应用用户模型。未来引入真实 User 后，通过新迁移添加 userId 关系、
+// 回填有效归属，再根据业务决定是否设为必填；此处不创建虚假的所有者。
+model Job {
+  id        String    @id @default(uuid()) @db.Uuid
+  company   String    @db.VarChar(100)
+  position  String    @db.VarChar(100)
+  location  String    @db.VarChar(100)
+  status    JobStatus @default(applied)
+  appliedAt DateTime  @db.Date
+  notes     String    @default("") @db.VarChar(2000)
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime  @default(now()) @updatedAt @db.Timestamptz(3)
+
+  @@index([appliedAt(sort: Desc)])
+  @@index([status, appliedAt(sort: Desc)])
+  @@map("jobs")
+}

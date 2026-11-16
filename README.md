@@ -1,10 +1,12 @@
 # JobFlow Pro
 
-基于 Next.js App Router、TypeScript 和 Tailwind CSS 的求职投递管理系统。前端支持岗位 CRUD、筛选、搜索和排序，继续使用浏览器 localStorage 持久化。另提供两个读取模拟数据的 Route Handler，用于学习后端 REST API；暂不接入数据库、登录或外部服务，没有新增依赖。
+基于 Next.js App Router、TypeScript 和 Tailwind CSS 的求职投递管理系统。前端 CRUD 继续使用 localStorage，两个只读 REST API 继续读取模拟数据。初始迁移已由用户执行，服务端 Prisma Repository 已连接 PostgreSQL 并通过真实 CRUD 验证；页面和公开 API 暂未切换到数据库。
 
 ## 本地运行
 
 首次安装依赖需要可访问 npm 仓库的网络环境。
+
+当前 Windows PowerShell 如阻止 `npm.ps1`，请使用 `npm.cmd` 调用以下相同脚本，无需修改系统执行策略。
 
 ```bash
 npm ci
@@ -18,11 +20,26 @@ npm run lint       # ESLint，任何警告也会导致检查失败
 npm run build      # 生产构建，同时检查 TypeScript
 npm run typecheck  # 单独执行 TypeScript 检查
 npm run test:api   # HTTP 接口测试，需要先启动 Next.js 服务
+npm run test:db    # Repository 与数据库测试，需要本地数据库和 .env.local；自动回滚测试写入
 npm start          # 运行上一步构建的生产版本
+npm run prisma:validate # 离线校验 Prisma schema
+npm run prisma:generate # 只生成客户端，不创建数据库表
 ```
 
 ## 代码结构与关键设计
 
+- PostgreSQL 配置与字段说明见 [数据库说明](docs/database.md)；Repository、错误处理和集成测试见 [数据访问层说明](docs/repository.md)。
+- `prisma/schema.prisma`：Job 数据模型、状态枚举及列表查询索引。
+- `prisma.config.ts`：Prisma 7 CLI 配置，复用 Next.js 环境变量加载器读取 `.env.local`。
+- `prisma/migrations/`：已由用户执行的首次迁移与 provider 锁定文件，本阶段未修改。
+- `src/lib/prisma.ts`：仅服务端可导入的延迟单例和关闭方法，使用 PrismaPg / pg，关闭原始错误日志。
+- `src/repositories/job-repository.ts`：查询、新增、更新和删除岗位，可注入事务 Client。
+- `src/lib/job-mapper.ts`：输入校验、写入字段白名单与 UTC 日期映射。
+- `src/lib/database-error.ts`：可安全交给上层处理的错误，不携带原始连接信息或底层异常。
+- `src/types/job-record.ts`：兼容现有 Job，附加 ISO 创建/修改时间戳。
+- `tests/database.test.ts`：真实数据库与 CRUD、事务回滚清理、日期边界和连接失败测试。
+- `tests/job-repository.test.ts`：日期映射、输入校验和错误脱敏测试。
+- `.env.example`：无真实密码的本地应用数据库连接示例。
 - `src/app/page.tsx`：服务端页面入口，组合页面框架并将本地岗位数据传给交互组件。
 - `src/app/layout.tsx`：全局 HTML 布局、中文语言设置和页面 metadata。
 - `src/app/globals.css`：Tailwind 入口、主题颜色、字体和键盘焦点样式。
@@ -158,8 +175,16 @@ npm run test:api
 
 ## 本次环境的验证结果
 
+- Repository 阶段：只读确认迁移 up to date；实际连接 `jobflow_db` / `jobflow_app`，确认 PostgreSQL 18.7。
+- 新增 9 项验证（4 项数据库集成、5 项映射/校验），在上海和洛杉矶时区均 9/9 通过；测试事务回滚后按测试 UUID 确认无残留。
+- lint、TypeScript、生产构建和原有 22 项模拟 API 测试通过。schema 和迁移文件未修改，未执行迁移、重置或业务数据清空。
+- 本阶段仅新增开发依赖 tsx，用于在 Node 测试中执行同一份 TypeScript Repository；运行时 Prisma、adapter 与 pg 版本未变。
+- 以下为先前 Prisma 准备阶段与前端阶段的历史验证记录。
+- Prisma 准备阶段：已锁定 Prisma CLI、Client、PostgreSQL adapter 为 7.10.1；schema 校验、Client 生成、lint、构建和 22 项只读 API 测试通过。
+- 已在隔离目录验证开发/生产环境加载 `.env.local`、缺失地址时允许离线工具运行，以及环境变量优先级；没有读取或输出真实数据库密码。
+- 首次 SQL 由离线 diff 生成，尚未应用。没有连接或检查实际数据库结构，真实连接及迁移执行需等待审核。
 - 本阶段只读 API：在生产服务上执行 `npm run test:api`，22 项通过、0 失败，未跳过测试。
-- 未新增依赖或外部服务。
+- REST API 与 CRUD 阶段未新增外部服务；本次新增 Prisma 和本地 PostgreSQL 所需依赖。
 - `npm run lint` 通过，0 错误、0 警告。
 - `npm run typecheck` 通过。
 - `npm run build` 通过，首页成功生成静态页面。
