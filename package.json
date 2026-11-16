@@ -11,20 +11,23 @@
     "lint": "eslint . --max-warnings=0",
     "typecheck": "tsc --noEmit",
     "test:api": "node --test tests/api.test.mjs",
-    "test:db": "node --conditions=react-server --import tsx --test tests/database.test.ts tests/job-repository.test.ts",
+    "test:db": "node --conditions=react-server --import tsx --test tests/database.test.ts tests/job-repository.test.ts tests/auth.test.ts",
+    "test:auth": "node --conditions=react-server --import tsx --test tests/auth.test.ts",
     "postinstall": "prisma generate",
     "prisma:generate": "prisma generate",
     "prisma:validate": "prisma validate",
     "prisma:format": "prisma format"
   },
   "dependencies": {
+    "@better-auth/prisma-adapter": "1.7.25",
     "@next/env": "16.4.6",
     "@prisma/adapter-pg": "7.10.1",
     "@prisma/client": "7.10.1",
+    "better-auth": "1.7.25",
     "next": "^16.0.0",
+    "pg": "8.23.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "pg": "8.23.1",
     "server-only": "0.0.1"
   },
   "devDependencies": {
@@ -37,7 +40,7 @@
     "eslint-config-next": "^16.0.0",
     "prisma": "7.10.1",
     "tailwindcss": "^4.1.0",
-    "typescript": "^5.9.0",
-    "tsx": "4.23.15"
+    "tsx": "4.23.15",
+    "typescript": "^5.9.0"
   }
 }

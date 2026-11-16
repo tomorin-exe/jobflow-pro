@@ -1,6 +1,6 @@
 # PostgreSQL 与 Prisma
 
-**初始迁移已由用户执行完成，本阶段通过只读命令确认数据库已是最新状态。** 已实现服务端 Repository 并在真实 PostgreSQL 上完成事务内 CRUD 验证，页面和模拟 API 数据来源保持原样。详细用法见 [Repository 与数据库测试](repository.md)。以下模型和初始 SQL 保留不变。
+**初始迁移已执行；新增 Better Auth / 岗位归属迁移待审核，尚未执行。** 本阶段只读检查 `jobs` 数量为 **0**，没有删除、更新或分配业务记录。schema 描述的是审核后的目标结构，当前物理库仍是初始结构。页面和模拟 API 保持原样。详见 [认证和迁移说明](authentication.md)、[Repository 与数据库测试](repository.md)。
 
 ## 版本与配置选择
 
@@ -50,12 +50,13 @@ Prisma 模型名为 `Job`，通过 `@@map("jobs")` 对应数据库表 `jobs`。�
 | `notes` | `String` / `VARCHAR(2000)` | 备注，默认空字符串，与现有可选备注一致 |
 | `createdAt` | `DateTime` / `TIMESTAMPTZ(3)` | 创建时刻，数据库默认当前时间，毫秒精度 |
 | `updatedAt` | `DateTime` / `TIMESTAMPTZ(3)` | 创建时默认当前时间，Prisma 更新时由 `@updatedAt` 自动维护 |
+| `userId`（待迁移） | `String?` / 可空 `UUID` 外键 | 关联 `User.id`；过渡期保留无归属记录，服务端不会向用户显示这些记录 |
 
 `NOT NULL` 不等于字符串必须有文字，空白校验仍应复用 `src/lib/jobs.ts`。`uuid()` 是 Prisma 侧默认值，因此 SQL 中主键没有数据库 UUID 默认表达式；直接写 SQL 时需自己提供 UUID。`@updatedAt` 也不是数据库触发器，绕过 Prisma 更新时需要自行维护该字段。
 
 现有前端 `Job.appliedAt` 是 `YYYY-MM-DD` 字符串，Prisma `DateTime` 在服务端使用 `Date`。现已通过 `src/lib/job-mapper.ts` 显式做 UTC 午夜日期转换；Repository 返回兼容 Job 的 `JobRecord`，额外时间戳为 ISO 字符串，前端表单类型保持原样。
 
-索引分别覆盖全列表按投递日期降序，以及按状态筛选后按日期降序的查询。当前模型没有虚假的 `User` 或 `userId`。未来加入真实用户时，用独立迁移创建 User、增加可空外键、回填有效归属，再按业务需要收紧约束。
+保留原有两个索引；目标模型另外增加 `(userId, appliedAt DESC)`、`(userId, status, appliedAt DESC)`，供按用户隔离的列表查询使用。新增真实认证所需的 User / Session / Account / Verification 模型；完整字段及保留无归属数据的方案见 [认证说明](authentication.md)。
 
 ## 首次迁移：已由用户执行
 
@@ -73,7 +74,7 @@ node node_modules/prisma/build/index.js migrate diff --from-empty --to-schema pr
 
 初始 SQL 以空模型为基线，现有库已经完成该迁移，不应再次手工执行建表 SQL。今后需要变更模型时应另建迁移，不修改已经执行的历史文件。
 
-本阶段没有执行迁移、重置或结构推送，没有导入种子数据。数据库测试只创建独立事务记录并回滚。当前模拟 ID 如 `job-001` 不是 UUID，不能原样作为数据库 UUID 导入；未来切换数据来源时仍需单独设计导入与 ID 映射。
+本阶段没有执行迁移、重置或结构推送，没有导入种子数据；由于认证结构尚未应用，真实数据库写入测试当前明确跳过。历史 CRUD 测试使用独立事务并回滚；新增隔离测试也采用此方式，待审核后运行。模拟 ID 如 `job-001` 不是 UUID，不能原样作为数据库 UUID 导入；未来切换数据来源仍需单独设计导入与归属确认。
 
 ## 服务端 Client
 
@@ -86,7 +87,7 @@ node node_modules/prisma/build/index.js migrate diff --from-empty --to-schema pr
 - 连接超时为 5 秒、单实例连接池上限为 5，`log: []` 避免 Prisma 自动输出底层敏感异常。
 - Repository 调用此模块；页面、localStorage Hook 和模拟 API 仍未调用。脚本结束时通过 `disconnectPrisma()` 关闭连接，请勿在每个请求后断开。
 
-## 准备阶段验证记录
+## 初始接入阶段验证记录（历史）
 
 - `npm.cmd run prisma:generate` / 安装后的 generate：通过。
 - `npm.cmd run prisma:validate`：通过。

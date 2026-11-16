@@ -18,7 +18,7 @@ export function fromDatabaseDate(value: Date): string {
   return date;
 }
 
-export function toJobWriteData(input: JobInput): Omit<Prisma.JobCreateInput, "id" | "createdAt" | "updatedAt"> {
+export function toJobWriteData(input: JobInput): Pick<Prisma.JobUncheckedCreateInput, "company" | "position" | "location" | "status" | "appliedAt" | "notes"> {
   // 类型约束之外也校验运行时输入，但业务规则仍复用现有校验器。
   if (typeof input !== "object" || input === null
     || !(["company", "position", "location", "appliedAt", "notes"] as const).every((field) =>

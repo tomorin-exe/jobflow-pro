@@ -9,6 +9,7 @@ const validInput: JobInput = {
   company: "测试公司", position: "开发工程师", location: "上海",
   status: "applied", appliedAt: "2024-02-29", notes: "测试备注",
 };
+const testOwner = async () => "11111111-1111-4111-8111-111111111111";
 
 test("日期映射使用 UTC，保留日历日期及四位年份", () => {
   for (const value of ["0001-01-01", "2024-02-29", "2026-03-08", "2026-11-01", "9999-12-31"]) {
@@ -26,7 +27,7 @@ test("日期映射拒绝非法日期，不做自动纠正", () => {
 });
 
 test("输入复用校验、清理空格，写入白名单排除 ID 与时间戳", () => {
-  const input = { ...validInput, company: "  测试公司  ", notes: "  备注  ", id: "不可注入", createdAt: "不可注入" };
+  const input = { ...validInput, company: "  测试公司  ", notes: "  备注  ", id: "不可注入", createdAt: "不可注入", userId: "不可注入" };
   const data = toJobWriteData(input);
   assert.equal(data.company, "测试公司");
   assert.equal(data.notes, "备注");
@@ -34,11 +35,12 @@ test("输入复用校验、清理空格，写入白名单排除 ID 与时间戳"
   assert.equal("id" in data, false);
   assert.equal("createdAt" in data, false);
   assert.equal("updatedAt" in data, false);
+  assert.equal("userId" in data, false);
 });
 
 test("无效 ID 与输入在访问数据库之前拒绝", async () => {
   let calls = 0;
-  const repository = createJobRepository(() => { calls += 1; throw new Error("不应访问数据库"); });
+  const repository = createJobRepository(() => { calls += 1; throw new Error("不应访问数据库"); }, testOwner);
   for (const operation of [
     () => repository.getJobById("invalid"),
     () => repository.updateJob("invalid", validInput),
@@ -61,7 +63,7 @@ test("无效 ID 与输入在访问数据库之前拒绝", async () => {
 test("底层敏感异常不会进入 Repository 返回的错误", async () => {
   const repository = createJobRepository(() => {
     throw new Error("DATABASE_URL=postgresql://private-user:FAKE_SECRET@private-host/private-db");
-  });
+  }, testOwner);
   await assert.rejects(() => repository.getAllJobs(), (error: unknown) => {
     assert.ok(error instanceof DatabaseAccessError);
     assert.equal(error.code, "DATABASE_UNAVAILABLE");

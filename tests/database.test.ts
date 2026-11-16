@@ -5,8 +5,10 @@ import nextEnv from "@next/env";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient, type Prisma } from "@/generated/prisma/client";
 import { DatabaseAccessError, withDatabaseErrors } from "@/lib/database-error";
+import { isAuthSchemaReady } from "@/lib/auth-schema";
+import { toJobWriteData } from "@/lib/job-mapper";
 import { disconnectPrisma, getPrisma } from "@/lib/prisma";
-import { createJobRepository, getAllJobs } from "@/repositories/job-repository";
+import { createJobRepository } from "@/repositories/job-repository";
 import type { JobInput } from "@/types/job";
 
 nextEnv.loadEnvConfig(process.cwd(), true, {
@@ -14,11 +16,15 @@ nextEnv.loadEnvConfig(process.cwd(), true, {
   error: () => { throw new DatabaseAccessError("CONFIGURATION_ERROR"); },
 });
 
+const authSchemaReady = await isAuthSchemaReady();
+const migrationSkip = authSchemaReady ? false : "Better Auth / userId 迁移尚未执行，禁止测试写入；不自动迁移。";
+
 type Repository = ReturnType<typeof createJobRepository>;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 let serverVersion = "";
 
 before(async () => {
+  if (!authSchemaReady) return;
   const [connection] = await withDatabaseErrors(() => getPrisma().$queryRaw<{
     database: string; role: string; version: string;
   }[]>`SELECT current_database() AS database, current_user AS role, current_setting('server_version') AS version`);
@@ -26,17 +32,19 @@ before(async () => {
   assert.equal(connection?.role, "jobflow_app", "数据库验证必须使用应用账号");
   serverVersion = connection.version;
   // 首次真实读取通过 Repository 的脱敏边界；不输出连接串或业务记录。
-  await getAllJobs();
 });
 
 after(async () => { await disconnectPrisma(); });
 
-async function withRollback(work: (repository: Repository, tx: Prisma.TransactionClient, ids: string[]) => Promise<void>) {
+async function withRollback(work: (repository: Repository, tx: Prisma.TransactionClient, ids: string[], userIds: string[]) => Promise<void>) {
   const rollback = new Error("数据库验证主动回滚");
   const ids: string[] = [];
+  const userIds: string[] = [];
   try {
     await getPrisma().$transaction(async (tx) => {
-      await work(createJobRepository(() => tx), tx, ids);
+      const user = await tx.user.create({ data: { name: "Integration User", email: `${randomUUID()}@example.invalid` } });
+      userIds.push(user.id);
+      await work(createJobRepository(() => tx, async () => user.id), tx, ids, userIds);
       // 即使验证中途失败，Prisma 也会回滚。不会提交任何测试写入。
       throw rollback;
     }, { maxWait: 5000, timeout: 15000 });
@@ -52,6 +60,10 @@ async function withRollback(work: (repository: Repository, tx: Prisma.Transactio
       const remaining = await withDatabaseErrors(() => getPrisma().job.count({ where: { id: { in: ids } } }));
       assert.equal(remaining, 0, "测试记录必须在事务结束后全部消失");
     }
+    if (userIds.length) {
+      const remaining = await withDatabaseErrors(() => getPrisma().user.count({ where: { id: { in: userIds } } }));
+      assert.equal(remaining, 0, "测试用户必须随事务回滚");
+    }
   }
 }
 
@@ -66,16 +78,20 @@ function input(appliedAt = "2024-02-29"): JobInput {
   };
 }
 
-test("真实查询可用，Client 单例复用，列表按日期及 ID 排序", async (context) => {
+test("真实查询可用，Client 单例复用，列表按日期及 ID 排序", { skip: migrationSkip }, async (context) => {
   context.diagnostic(`数据库 jobflow_db，账号 jobflow_app，PostgreSQL ${serverVersion}`);
   assert.equal(getPrisma(), getPrisma());
-  const jobs = await getAllJobs();
-  assert.ok(jobs.every((job, index) => index === 0
-    || jobs[index - 1].appliedAt > job.appliedAt
-    || (jobs[index - 1].appliedAt === job.appliedAt && jobs[index - 1].id <= job.id)), "列表排序不正确");
+  await withRollback(async (repository, _tx, ids) => {
+    ids.push((await repository.createJob(input("2026-11-17"))).id);
+    ids.push((await repository.createJob(input("2024-02-29"))).id);
+    const jobs = await repository.getAllJobs();
+    assert.ok(jobs.every((job, index) => index === 0
+      || jobs[index - 1].appliedAt > job.appliedAt
+      || (jobs[index - 1].appliedAt === job.appliedAt && jobs[index - 1].id <= job.id)), "列表排序不正确");
+  });
 });
 
-test("真实数据库新增、查询、更新、删除，保持 ID 并清理所有测试记录", { timeout: 30000 }, async () => {
+test("真实数据库新增、查询、更新、删除，保持 ID 并清理所有测试记录", { timeout: 30000, skip: migrationSkip }, async () => {
   await withRollback(async (repository, tx, ids) => {
     const values = input();
     const created = await repository.createJob(values);
@@ -117,7 +133,7 @@ test("真实数据库新增、查询、更新、删除，保持 ID 并清理所�
   });
 });
 
-test("PostgreSQL DATE 在闰日、跨年和夏令时边界保持原日期", { timeout: 30000 }, async (context) => {
+test("PostgreSQL DATE 在闰日、跨年和夏令时边界保持原日期", { timeout: 30000, skip: migrationSkip }, async (context) => {
   context.diagnostic(`测试时区：${Intl.DateTimeFormat().resolvedOptions().timeZone}`);
   await withRollback(async (repository, _tx, ids) => {
     for (const date of ["0001-01-01", "1900-02-28", "2000-02-29", "2024-02-29", "2026-01-01", "2026-03-08", "2026-11-01", "2026-12-31", "9999-12-31"]) {
@@ -129,7 +145,7 @@ test("PostgreSQL DATE 在闰日、跨年和夏令时边界保持原日期", { ti
   });
 });
 
-test("连接失败返回安全错误，不携带底层异常或连接信息", { timeout: 10000 }, async () => {
+test("连接失败返回安全错误，不携带底层异常或连接信息", { timeout: 10000, skip: migrationSkip }, async () => {
   const unavailable = new PrismaClient({
     adapter: new PrismaPg({
       connectionString: "postgresql://jobflow_app:TEST_PLACEHOLDER@127.0.0.1:1/jobflow_db",
@@ -140,7 +156,7 @@ test("连接失败返回安全错误，不携带底层异常或连接信息", { 
     errorFormat: "minimal",
   });
   try {
-    const repository = createJobRepository(() => unavailable);
+    const repository = createJobRepository(() => unavailable, async () => "11111111-1111-4111-8111-111111111111");
     await assert.rejects(() => repository.getAllJobs(), (error: unknown) => {
       assert.ok(error instanceof DatabaseAccessError);
       assert.equal(error.code, "DATABASE_UNAVAILABLE");
@@ -152,4 +168,26 @@ test("连接失败返回安全错误，不携带底层异常或连接信息", { 
   } finally {
     await withDatabaseErrors(() => unavailable.$disconnect());
   }
+});
+
+test("两个用户不能读取或修改对方岗位，未归属数据不可见，不能伪造所有者", { timeout: 30000, skip: migrationSkip }, async () => {
+  await withRollback(async (repositoryA, tx, ids, userIds) => {
+    const userB = await tx.user.create({ data: { name: "Integration B", email: `${randomUUID()}@example.invalid` } });
+    userIds.push(userB.id);
+    const repositoryB = createJobRepository(() => tx, async () => userB.id);
+    const a = await repositoryA.createJob({ ...input(), userId: userB.id } as JobInput);
+    const b = await repositoryB.createJob(input());
+    const legacy = await tx.job.create({ data: { ...toJobWriteData(input()), userId: null } });
+    ids.push(a.id, b.id, legacy.id);
+    assert.notEqual((await tx.job.findUniqueOrThrow({ where: { id: a.id } })).userId, userB.id);
+    assert.deepEqual((await repositoryA.getAllJobs()).map((job) => job.id), [a.id]);
+    assert.deepEqual((await repositoryB.getAllJobs()).map((job) => job.id), [b.id]);
+    assert.equal(await repositoryA.getJobById(b.id), null);
+    assert.equal(await repositoryB.getJobById(a.id), null);
+    assert.equal(await repositoryA.getJobById(legacy.id), null);
+    assert.equal(await repositoryB.getJobById(legacy.id), null);
+    assert.equal(await repositoryA.updateJob(b.id, input()), null);
+    assert.equal(await repositoryA.deleteJob(b.id), null);
+    assert.equal((await repositoryB.getJobById(b.id))?.id, b.id);
+  });
 });

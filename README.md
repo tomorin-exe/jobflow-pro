@@ -1,6 +1,6 @@
 # JobFlow Pro
 
-基于 Next.js App Router、TypeScript 和 Tailwind CSS 的求职投递管理系统。前端 CRUD 继续使用 localStorage，两个只读 REST API 继续读取模拟数据。初始迁移已由用户执行，服务端 Prisma Repository 已连接 PostgreSQL 并通过真实 CRUD 验证；页面和公开 API 暂未切换到数据库。
+基于 Next.js App Router、TypeScript 和 Tailwind CSS 的求职投递管理系统。前端 CRUD 继续使用 localStorage，两个只读 REST API 继续读取模拟数据。初始迁移已执行；本阶段准备 Better Auth 邮箱密码认证和岗位用户归属，**新增认证迁移尚未执行**。默认 Repository 已要求可信服务端会话，页面没有接入认证或数据库。
 
 ## 本地运行
 
@@ -20,7 +20,8 @@ npm run lint       # ESLint，任何警告也会导致检查失败
 npm run build      # 生产构建，同时检查 TypeScript
 npm run typecheck  # 单独执行 TypeScript 检查
 npm run test:api   # HTTP 接口测试，需要先启动 Next.js 服务
-npm run test:db    # Repository 与数据库测试，需要本地数据库和 .env.local；自动回滚测试写入
+npm run test:db    # 认证/Repository 单元测试及数据库测试；未执行认证迁移时跳过真实 CRUD
+npm run test:auth  # 认证配置、授权边界单元测试，不连接数据库
 npm start          # 运行上一步构建的生产版本
 npm run prisma:validate # 离线校验 Prisma schema
 npm run prisma:generate # 只生成客户端，不创建数据库表
@@ -28,18 +29,23 @@ npm run prisma:generate # 只生成客户端，不创建数据库表
 
 ## 代码结构与关键设计
 
-- PostgreSQL 配置与字段说明见 [数据库说明](docs/database.md)；Repository、错误处理和集成测试见 [数据访问层说明](docs/repository.md)。
-- `prisma/schema.prisma`：Job 数据模型、状态枚举及列表查询索引。
+- PostgreSQL 配置与字段说明见 [数据库说明](docs/database.md)；Repository、错误处理和集成测试见 [数据访问层说明](docs/repository.md)。认证配置、迁移审核和双用户测试见 [认证说明](docs/authentication.md)。
+- `prisma/schema.prisma`：Job、User、Session、Account、Verification 模型，状态枚举和索引。
 - `prisma.config.ts`：Prisma 7 CLI 配置，复用 Next.js 环境变量加载器读取 `.env.local`。
-- `prisma/migrations/`：已由用户执行的首次迁移与 provider 锁定文件，本阶段未修改。
+- `prisma/migrations/`：保留已执行的首次迁移；新增待审核的认证/岗位归属迁移，未执行。
+- `src/lib/auth.ts`、`auth-client.ts`：Better Auth 服务端延迟实例和同源 React 客户端。
+- `src/lib/session.ts`：读取可信服务端 Session，未登录时拒绝访问数据库岗位。
+- `src/lib/auth-config.ts`、`auth-schema.ts`、`auth-error.ts`：配置校验、只读结构检查及安全错误。
+- `src/app/api/auth/[...all]/route.ts`：Better Auth GET/POST 入口，迁移未完成时返回安全的 503。
 - `src/lib/prisma.ts`：仅服务端可导入的延迟单例和关闭方法，使用 PrismaPg / pg，关闭原始错误日志。
-- `src/repositories/job-repository.ts`：查询、新增、更新和删除岗位，可注入事务 Client。
+- `src/repositories/job-repository.ts`：按会话 userId 隔离的岗位查询和 CRUD，可为服务端测试注入事务 Client。
 - `src/lib/job-mapper.ts`：输入校验、写入字段白名单与 UTC 日期映射。
 - `src/lib/database-error.ts`：可安全交给上层处理的错误，不携带原始连接信息或底层异常。
 - `src/types/job-record.ts`：兼容现有 Job，附加 ISO 创建/修改时间戳。
 - `tests/database.test.ts`：真实数据库与 CRUD、事务回滚清理、日期边界和连接失败测试。
 - `tests/job-repository.test.ts`：日期映射、输入校验和错误脱敏测试。
-- `.env.example`：无真实密码的本地应用数据库连接示例。
+- `tests/auth.test.ts`：未登录拒绝、所有者查询条件、伪造 userId 与配置脱敏测试。
+- `.env.example`：数据库地址、认证密钥及应用 URL 的占位示例，无真实凭据。
 - `src/app/page.tsx`：服务端页面入口，组合页面框架并将本地岗位数据传给交互组件。
 - `src/app/layout.tsx`：全局 HTML 布局、中文语言设置和页面 metadata。
 - `src/app/globals.css`：Tailwind 入口、主题颜色、字体和键盘焦点样式。
@@ -175,10 +181,19 @@ npm run test:api
 
 ## 本次环境的验证结果
 
+- Better Auth 阶段：jobs 只读计数为 0；新增迁移未执行，已执行的初始迁移及 lock 文件哈希保持不变。
+- 已锁定 Better Auth 与 Prisma adapter 为 1.7.25，保留 Prisma 7.10.1；schema 校验、Client 生成、lint、typecheck、build 全部通过。
+- 最终迁移审查已为四张认证表补充 PostgreSQL 原生 UUID 默认值；Verification.updatedAt 原本已经存在且与 Schema 一致，离线 diff 核对 SQL 完全匹配。
+- 原有模拟 API 测试 22/22 通过；test:db 为 12 项单元测试通过（含 UUID 与 Adapter 审查测试）、5 项数据库集成测试因待迁移跳过，没有失败。
+- 生产服务上的认证 Session 查询及空注册请求均返回 503 / AUTH_MIGRATION_REQUIRED，未创建认证或业务记录。
+- 只读 migrate status 退出码为 1，原因是新增迁移尚未应用，符合本次只准备不执行的要求。真实登录及双用户数据库隔离待用户审核迁移后验证。
+
+## 历史验证记录
+
 - Repository 阶段：只读确认迁移 up to date；实际连接 `jobflow_db` / `jobflow_app`，确认 PostgreSQL 18.7。
 - 新增 9 项验证（4 项数据库集成、5 项映射/校验），在上海和洛杉矶时区均 9/9 通过；测试事务回滚后按测试 UUID 确认无残留。
 - lint、TypeScript、生产构建和原有 22 项模拟 API 测试通过。schema 和迁移文件未修改，未执行迁移、重置或业务数据清空。
-- 本阶段仅新增开发依赖 tsx，用于在 Node 测试中执行同一份 TypeScript Repository；运行时 Prisma、adapter 与 pg 版本未变。
+- Repository 阶段仅新增开发依赖 tsx，用于在 Node 测试中执行同一份 TypeScript Repository；当时运行时 Prisma、adapter 与 pg 版本未变。
 - 以下为先前 Prisma 准备阶段与前端阶段的历史验证记录。
 - Prisma 准备阶段：已锁定 Prisma CLI、Client、PostgreSQL adapter 为 7.10.1；schema 校验、Client 生成、lint、构建和 22 项只读 API 测试通过。
 - 已在隔离目录验证开发/生产环境加载 `.env.local`、缺失地址时允许离线工具运行，以及环境变量优先级；没有读取或输出真实数据库密码。

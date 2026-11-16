@@ -16,8 +16,7 @@ enum JobStatus {
   rejected
 }
 
-// 当前没有应用用户模型。未来引入真实 User 后，通过新迁移添加 userId 关系、
-// 回填有效归属，再根据业务决定是否设为必填；此处不创建虚假的所有者。
+// 扩展阶段允许旧记录没有所有者；服务端只创建/读取已绑定可信会话用户的岗位。
 model Job {
   id        String    @id @default(uuid()) @db.Uuid
   company   String    @db.VarChar(100)
@@ -28,8 +27,78 @@ model Job {
   notes     String    @default("") @db.VarChar(2000)
   createdAt DateTime  @default(now()) @db.Timestamptz(3)
   updatedAt DateTime  @default(now()) @updatedAt @db.Timestamptz(3)
+  userId    String?   @db.Uuid
+  user      User?     @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   @@index([appliedAt(sort: Desc)])
   @@index([status, appliedAt(sort: Desc)])
+  @@index([userId, appliedAt(sort: Desc)])
+  @@index([userId, status, appliedAt(sort: Desc)])
   @@map("jobs")
+}
+
+// Better Auth 的 PostgreSQL UUID 策略省略插入 ID；认证表由数据库默认值生成。
+model User {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name          String
+  email         String    @unique
+  emailVerified Boolean   @default(false)
+  image         String?
+  createdAt     DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime  @default(now()) @updatedAt @db.Timestamptz(3)
+  sessions      Session[]
+  accounts      Account[]
+  jobs          Job[]
+
+  @@map("users")
+}
+
+model Session {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  expiresAt DateTime @db.Timestamptz(3)
+  token     String   @unique
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  ipAddress String?
+  userAgent String?
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model Account {
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  accountId             String
+  providerId            String
+  userId                String    @db.Uuid
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime? @db.Timestamptz(3)
+  refreshTokenExpiresAt DateTime? @db.Timestamptz(3)
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime  @default(now()) @updatedAt @db.Timestamptz(3)
+
+  @@unique([providerId, accountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Verification {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  identifier String
+  value      String
+  expiresAt  DateTime @db.Timestamptz(3)
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+
+  @@index([identifier])
+  @@index([expiresAt])
+  @@map("verifications")
 }

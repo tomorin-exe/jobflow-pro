@@ -3,6 +3,8 @@ import { Prisma } from "@/generated/prisma/client";
 import { DatabaseAccessError, withDatabaseErrors } from "@/lib/database-error";
 import { toJobRecord, toJobWriteData } from "@/lib/job-mapper";
 import { getPrisma } from "@/lib/prisma";
+import { requireUserId } from "@/lib/session";
+import { AuthError } from "@/lib/auth-error";
 import type { JobInput } from "@/types/job";
 import type { JobRecord } from "@/types/job-record";
 
@@ -18,37 +20,48 @@ function isNotFound(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2025";
 }
 
-/** 可注入事务 Client，使集成测试使用相同业务逻辑并安全回滚。 */
-export function createJobRepository(getDatabase: () => JobDatabase = getPrisma) {
+/** 默认信任服务端 Session；注入解析函数只供可信服务端测试，绝不能接收客户端 userId。 */
+export function createJobRepository(getDatabase: () => JobDatabase = getPrisma, resolveUserId: () => Promise<string> = requireUserId) {
+  async function owner() {
+    const id = await resolveUserId();
+    if (typeof id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+      throw new AuthError("UNAUTHORIZED");
+    }
+    return id;
+  }
   return {
-    getAllJobs(): Promise<JobRecord[]> {
+    async getAllJobs(): Promise<JobRecord[]> {
+      const userId = await owner();
       return withDatabaseErrors(async () => {
-        const jobs = await getDatabase().job.findMany({ orderBy: [{ appliedAt: "desc" }, { id: "asc" }] });
+        const jobs = await getDatabase().job.findMany({ where: { userId }, orderBy: [{ appliedAt: "desc" }, { id: "asc" }] });
         return jobs.map(toJobRecord);
       });
     },
 
-    getJobById(id: string): Promise<JobRecord | null> {
+    async getJobById(id: string): Promise<JobRecord | null> {
+      const userId = await owner();
       return withDatabaseErrors(async () => {
         validateId(id);
-        const job = await getDatabase().job.findUnique({ where: { id } });
+        const job = await getDatabase().job.findUnique({ where: { id, userId } });
         return job ? toJobRecord(job) : null;
       });
     },
 
-    createJob(input: JobInput): Promise<JobRecord> {
+    async createJob(input: JobInput): Promise<JobRecord> {
+      const userId = await owner();
       return withDatabaseErrors(async () => {
         const data = toJobWriteData(input);
-        return toJobRecord(await getDatabase().job.create({ data }));
+        return toJobRecord(await getDatabase().job.create({ data: { ...data, userId } }));
       });
     },
 
-    updateJob(id: string, input: JobInput): Promise<JobRecord | null> {
+    async updateJob(id: string, input: JobInput): Promise<JobRecord | null> {
+      const userId = await owner();
       return withDatabaseErrors(async () => {
         validateId(id);
         const data = toJobWriteData(input);
         try {
-          return toJobRecord(await getDatabase().job.update({ where: { id }, data }));
+          return toJobRecord(await getDatabase().job.update({ where: { id, userId }, data }));
         } catch (error) {
           if (isNotFound(error)) return null;
           throw error;
@@ -56,11 +69,12 @@ export function createJobRepository(getDatabase: () => JobDatabase = getPrisma) 
       });
     },
 
-    deleteJob(id: string): Promise<JobRecord | null> {
+    async deleteJob(id: string): Promise<JobRecord | null> {
+      const userId = await owner();
       return withDatabaseErrors(async () => {
         validateId(id);
         try {
-          return toJobRecord(await getDatabase().job.delete({ where: { id } }));
+          return toJobRecord(await getDatabase().job.delete({ where: { id, userId } }));
         } catch (error) {
           if (isNotFound(error)) return null;
           throw error;
