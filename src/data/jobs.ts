@@ -1,6 +1,6 @@
 import type { Job } from "@/types/job";
 
-// 仅存储键不存在时使用；后续岗位数据由浏览器 localStorage 管理。
+// 前端首次初始化与只读 API 共用；浏览器 CRUD 结果仍仅保存在 localStorage。
 export const mockJobs = [
   {
     id: "job-001",

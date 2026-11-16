@@ -1,6 +1,6 @@
 # JobFlow Pro
 
-基于 Next.js App Router、TypeScript 和 Tailwind CSS 的求职投递管理系统。支持岗位新增、编辑、删除、状态筛选、搜索和排序，数据使用浏览器 localStorage 持久化；没有后端、数据库、登录或外部 API，也没有新增依赖。
+基于 Next.js App Router、TypeScript 和 Tailwind CSS 的求职投递管理系统。前端支持岗位 CRUD、筛选、搜索和排序，继续使用浏览器 localStorage 持久化。另提供两个读取模拟数据的 Route Handler，用于学习后端 REST API；暂不接入数据库、登录或外部服务，没有新增依赖。
 
 ## 本地运行
 
@@ -17,6 +17,7 @@ npm run dev
 npm run lint       # ESLint，任何警告也会导致检查失败
 npm run build      # 生产构建，同时检查 TypeScript
 npm run typecheck  # 单独执行 TypeScript 检查
+npm run test:api   # HTTP 接口测试，需要先启动 Next.js 服务
 npm start          # 运行上一步构建的生产版本
 ```
 
@@ -27,7 +28,11 @@ npm start          # 运行上一步构建的生产版本
 - `src/app/globals.css`：Tailwind 入口、主题颜色、字体和键盘焦点样式。
 - `src/app/icon.svg`：本地站点图标，不依赖远程图片或字体。
 - `src/types/job.ts`：定义包含备注的 `Job`、不含 ID 的表单输入 `JobInput`、字段错误和操作结果类型。
+- `src/types/api.ts`：健康检查、岗位列表和参数错误的 JSON 响应类型；岗位响应复用 `Job`。
 - `src/data/jobs.ts`：8 条首次访问时使用的初始记录；`satisfies Job[]` 校验数据结构。
+- `src/app/api/health/route.ts`：`GET /api/health` 健康检查。
+- `src/app/api/jobs/route.ts`：`GET /api/jobs`，读取模拟数据并校验可选的 `status` 参数。
+- `tests/api.test.mjs`：使用 Node 内置 `node:test`、`fetch` 和断言模块，对真实 HTTP 服务验证接口契约。
 - `src/lib/jobs.ts`：字段清理、必填/长度/日历日期/状态校验、运行时数据类型检查，以及返回新数组的 CRUD 纯函数。
 - `src/lib/job-storage.ts`：存储键、JSON 解析、重复 ID 校验、唯一 ID 生成、读写异常处理和可订阅的数据快照。
 - `src/hooks/use-jobs.ts`：用 `useSyncExternalStore` 将存储快照接入 React，并提供新增、修改、删除、重试和清空损坏数据方法。
@@ -82,6 +87,62 @@ npm start          # 运行上一步构建的生产版本
 
 表单中公司、职位和地点各最多 100 个字符，备注选填且最多 2000 个字符；投递日期必须是真实有效的 `YYYY-MM-DD` 日历日期。
 
+## 只读 REST API
+
+这两个接口只读取 `src/data/jobs.ts` 的模拟数据。页面的数据源仍是 localStorage；在页面新增、编辑或删除的记录不会同步到这些接口，接口也不会读取浏览器存储。
+
+| 请求 | HTTP 状态 | 响应 |
+| --- | --- | --- |
+| `GET /api/health` | 200 | `{ "status": "ok", "service": "jobflow" }` |
+| `GET /api/jobs` | 200 | `{ "data": [完整 Job 记录], "total": 8 }` |
+| `GET /api/jobs?status=applied` | 200 | 当前 3 条已投递记录及 `total: 3` |
+| `GET /api/jobs?status=interviewing` | 200 | 当前 3 条面试中记录及 `total: 3` |
+| `GET /api/jobs?status=offered` | 200 | 当前 1 条已录用记录及 `total: 1` |
+| `GET /api/jobs?status=rejected` | 200 | 当前 1 条未通过记录及 `total: 1` |
+
+不传 `status` 表示返回全部岗位；传入时必须是上述英文状态值之一，且区分大小写。空值、中文显示文案、前后空格、前端专用的 `all` 和重复参数都会返回 400。示例：
+
+```json
+{
+  "error": {
+    "code": "INVALID_STATUS",
+    "message": "status 参数只能出现一次，且必须是以下值之一：applied、interviewing、offered、rejected。"
+  }
+}
+```
+
+`total` 始终等于当前返回的 `data.length`。两个 Route Handler 只导出 `GET`；POST、PATCH、DELETE 未实现，由 Next.js 返回 405。
+
+### Route Handler 如何工作
+
+文件路径决定 URL：`src/app/api/jobs/route.ts` 对应 `/api/jobs`，导出的 `GET` 函数处理 GET 请求。`NextRequest.nextUrl.searchParams` 提供 URL 查询参数，现有 `isJobStatus` 对外部输入进行运行时校验。合法请求对 `mockJobs` 进行只读筛选，再使用 `NextResponse.json` 返回 JSON 和 Content-Type；错误请求显式设置 HTTP 400。
+
+`src/types/api.ts` 定义服务端响应契约，`JobsResponse.data` 使用已有 `Job[]`。泛型 `NextResponse.json<JobsResponse>` 让错误的响应字段在编译阶段暴露；查询参数仍需要运行时校验，因为 TypeScript 不会检查用户实际发来的字符串。
+
+### 运行接口测试
+
+先在一个终端启动服务，例如使用生产版本：
+
+```bash
+npm run build
+npm start
+```
+
+再在另一个终端执行：
+
+```bash
+npm run test:api
+```
+
+默认测试地址是 `http://127.0.0.1:3000`，也可对 `npm run dev` 启动的服务测试。若端口不同，在 PowerShell 中设置：
+
+```powershell
+$env:API_BASE_URL = "http://127.0.0.1:3012"
+npm run test:api
+```
+
+测试会发送真实请求，因此能覆盖 Next.js 路由映射、查询参数解析、HTTP 状态码、JSON Content-Type、响应结构和未实现方法的 405 行为。当前有 22 项测试，包含默认数据、全部合法状态、非法/空/重复参数以及筛选后原始数据不变；无需安装额外测试依赖。
+
 ## 手动验证
 
 1. **首次读取**：运行 `npm run dev`，用没有本项目存储记录的测试浏览器打开页面，应出现 8 条初始记录。已有存储时应读取原有记录。
@@ -97,10 +158,12 @@ npm start          # 运行上一步构建的生产版本
 
 ## 本次环境的验证结果
 
+- 本阶段只读 API：在生产服务上执行 `npm run test:api`，22 项通过、0 失败，未跳过测试。
 - 未新增依赖或外部服务。
 - `npm run lint` 通过，0 错误、0 警告。
 - `npm run typecheck` 通过。
 - `npm run build` 通过，首页成功生成静态页面。
+- 以下前端浏览器记录保留自 CRUD 阶段；本次没有修改 Dashboard、表单或 localStorage 数据逻辑。
 - 在独立测试端口的生产版本中验证通过：新增、六字段回填、编辑取消/保存、删除取消/Escape/确认、备注、ID 稳定唯一、刷新持久化、统计更新及筛选/搜索/排序兼容。
 - 删除全部后存储为 `[]`，刷新不会恢复模拟数据；真实空态仍可新增。
 - 无效 JSON、非数组、字段缺失、非法状态、无效日期及重复 ID 均被识别，原文保留。重试、取消清空及确认清空均通过。
