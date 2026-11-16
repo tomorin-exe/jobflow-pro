@@ -1,6 +1,6 @@
 import type { Job } from "@/types/job";
 
-// 固定的本地演示数据；状态和字段会在编译时接受类型检查。
+// 仅存储键不存在时使用；后续岗位数据由浏览器 localStorage 管理。
 export const mockJobs = [
   {
     id: "job-001",
@@ -9,6 +9,7 @@ export const mockJobs = [
     location: "北京 · 朝阳区",
     status: "interviewing",
     appliedAt: "2026-11-16",
+    notes: "准备下一轮技术面试，复习 React 和浏览器相关知识。",
   },
   {
     id: "job-002",
@@ -17,6 +18,7 @@ export const mockJobs = [
     location: "深圳 · 南山区",
     status: "applied",
     appliedAt: "2026-11-15",
+    notes: "",
   },
   {
     id: "job-003",
@@ -25,6 +27,7 @@ export const mockJobs = [
     location: "上海 · 黄浦区",
     status: "interviewing",
     appliedAt: "2026-11-14",
+    notes: "面试时可以介绍个人全栈项目。",
   },
   {
     id: "job-004",
@@ -33,6 +36,7 @@ export const mockJobs = [
     location: "杭州 · 余杭区",
     status: "offered",
     appliedAt: "2026-11-12",
+    notes: "确认入职时间与录用通知中的具体安排。",
   },
   {
     id: "job-005",
@@ -41,6 +45,7 @@ export const mockJobs = [
     location: "杭州 · 滨江区",
     status: "applied",
     appliedAt: "2026-11-11",
+    notes: "",
   },
   {
     id: "job-006",
@@ -49,6 +54,7 @@ export const mockJobs = [
     location: "北京 · 朝阳区",
     status: "interviewing",
     appliedAt: "2026-11-10",
+    notes: "",
   },
   {
     id: "job-007",
@@ -57,6 +63,7 @@ export const mockJobs = [
     location: "上海 · 杨浦区",
     status: "applied",
     appliedAt: "2026-11-08",
+    notes: "",
   },
   {
     id: "job-008",
@@ -65,5 +72,6 @@ export const mockJobs = [
     location: "上海 · 徐汇区",
     status: "rejected",
     appliedAt: "2026-11-06",
+    notes: "整理面试复盘，继续寻找适合的机会。",
   },
 ] satisfies Job[];

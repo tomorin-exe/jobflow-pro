@@ -17,7 +17,7 @@ export default function HomePage() {
         </div>
         <div className="flex items-center gap-4">
           <span className="flex items-center gap-1.5 text-[11px] text-secondary">
-            <span aria-hidden="true" className="size-1.5 rounded-full bg-brand" />本地演示
+            <span aria-hidden="true" className="size-1.5 rounded-full bg-brand" />本地工作区
           </span>
           <span aria-hidden="true" className="flex size-8 items-center justify-center rounded-full border border-[#e1e8de] bg-[#edf2e8] font-mono text-[11px] font-medium text-[#5d7253]">
             JF
@@ -39,7 +39,7 @@ export default function HomePage() {
           </div>
         </div>
 
-        <JobDashboard jobs={mockJobs} />
+        <JobDashboard initialJobs={mockJobs} />
 
         <footer className="mt-10 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-5 text-[10px] tracking-wide text-muted">
           <span>JobFlow Pro <span aria-hidden="true" className="mx-1">/</span> 让每一份努力都有方向</span>

@@ -13,6 +13,9 @@ const paths = {
   leaf: <><path d="M20 3C8 2 2 8 5 15c6 6 15 1 15-12ZM4 21 15 10" /></>,
   check: <path d="m5 12 4 4L19 6" />,
   close: <path d="m6 6 12 12M6 18 18 6" />,
+  plus: <path d="M12 5v14M5 12h14" />,
+  edit: <><path d="m16 4 4 4M4 20l4-1L21 6a2.8 2.8 0 0 0-4-4L4 15l-1 6Z" /></>,
+  trash: <><path d="M3 6h18M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M5 6l1 14h12l1-14M10 10v6M14 10v6" /></>,
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof paths;
