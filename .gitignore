@@ -10,3 +10,17 @@ next-env.d.ts
 /.qa/
 /.playwright-mcp/
 /src/generated/prisma/
+/test-results/
+/playwright-report/
+/backups/
+*.dump
+*.backup
+*.pgdump
+*backup*.sql
+*dump*.sql
+*.pem
+*.key
+*.p12
+*.pfx
+.DS_Store
+Thumbs.db

@@ -1,0 +1,25 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import yaml from 'js-yaml';
+
+const workflow = yaml.load(readFileSync('.github/workflows/ci.yml', 'utf8'));
+assert.equal(workflow.name, 'CI');
+assert.deepEqual(Object.keys(workflow.on).sort(), ['pull_request', 'push', 'workflow_dispatch']);
+assert.deepEqual(workflow.permissions, { contents: 'read' });
+const job = workflow.jobs.test;
+assert.equal(job['runs-on'], 'ubuntu-24.04');
+assert.equal(readFileSync('.nvmrc', 'utf8').trim(), '24');
+assert.equal(job.services.postgres.image, 'postgres:18');
+assert.deepEqual(job.services.postgres.ports, ['127.0.0.1:5432:5432']);
+assert.equal(job.services.postgres.env.POSTGRES_DB, 'postgres');
+assert.equal(job.services.postgres.env.POSTGRES_USER, 'jobflow_ci_admin');
+assert.equal(job.env.QQ_SMTP_USER, ''); assert.equal(job.env.QQ_SMTP_AUTH_CODE, '');
+assert.equal(job.env.CI, 'true');
+assert.ok(job.steps.every((step) => !step.uses || /^actions\/(checkout|setup-node)@[0-9a-f]{40}$/.test(step.uses)));
+assert.equal(job.steps[0].with['persist-credentials'], false);
+assert.equal(job.steps[0].with['fetch-depth'], 0);
+const commands = job.steps.filter((step) => step.run).flatMap((step) => step.run.trim().split('\n'));
+const required = ['node scripts/ci-environment.mjs', 'npm ci --no-audit --no-fund', 'npm run audit:repo', 'npm run check:ci', 'npm run ci:db:prepare', 'npm run prisma:generate', 'npm run prisma:validate', 'npm run ci:db:migrate', 'npm run lint', 'npm run typecheck', 'npm run build', 'npm run test:all'];
+assert.deepEqual(commands, required);
+assert.ok(!/secrets\.|pull_request_target|migrate reset|db push/.test(readFileSync('.github/workflows/ci.yml', 'utf8')));
+console.log('CI YAML parsed; actions, Node, PostgreSQL service, permissions, SMTP isolation and step order verified.');

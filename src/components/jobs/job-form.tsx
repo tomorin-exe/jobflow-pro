@@ -6,7 +6,7 @@ import { JOB_STATUSES, type Job, type JobFieldErrors, type JobInput, type JobMut
 
 interface JobFormProps {
   job?: Job;
-  onSave: (input: JobInput) => JobMutationResult;
+  onSave: (input: JobInput) => JobMutationResult | Promise<JobMutationResult>;
   onCancel: () => void;
 }
 
@@ -20,6 +20,8 @@ const inputClassName = "mt-2 w-full rounded-lg border border-line bg-[#fafbf9] p
 export function JobForm({ job, onSave, onCancel }: JobFormProps) {
   const id = useId();
   const formRef = useRef<HTMLFormElement>(null);
+  const submitting = useRef(false);
+  const [pending, setPending] = useState(false);
   const [values, setValues] = useState<JobInput>(() => job ? {
     company: job.company,
     position: job.position,
@@ -37,8 +39,9 @@ export function JobForm({ job, onSave, onCancel }: JobFormProps) {
     setSaveError(null);
   }
 
-  function submit(event: FormEvent<HTMLFormElement>) {
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submitting.current) return;
     const nextErrors = validateJobInput(values);
     setErrors(nextErrors);
     setSaveError(null);
@@ -47,14 +50,19 @@ export function JobForm({ job, onSave, onCancel }: JobFormProps) {
       formRef.current?.querySelector<HTMLElement>(`[name="${firstInvalid}"]`)?.focus();
       return;
     }
-    const result = onSave(normalizeJobInput(values));
-    if (!result.ok) setSaveError(result.error);
+    submitting.current = true;
+    setPending(true);
+    try {
+      const result = await onSave(normalizeJobInput(values));
+      if (!result.ok) setSaveError(result.error);
+    } catch { setSaveError("保存未完成，请稍后重试。"); }
+    finally { submitting.current = false; setPending(false); }
   }
 
   return (
-    <Modal title={job ? "编辑岗位" : "新增岗位"} description="记录新的机会，带着清晰的计划迈出下一步。标有 * 的项目为必填项。" onClose={onCancel}>
+    <Modal title={job ? "编辑岗位" : "新增岗位"} description="记录新的机会，带着清晰的计划迈出下一步。标有 * 的项目为必填项。" onClose={() => { if (!submitting.current) onCancel(); }} busy={pending}>
       <form ref={formRef} noValidate onSubmit={submit} className="flex min-h-0 flex-col">
-        <div className="min-h-0 space-y-4 overflow-y-auto p-5 sm:p-6">
+        <fieldset disabled={pending} className="min-h-0 min-w-0 space-y-4 overflow-y-auto p-5 sm:p-6">
           {saveError && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm leading-6 text-red-700">{saveError}</p>}
           {([['company', '公司名称'], ['position', '职位名称'], ['location', '工作地点']] as const).map(([field, label]) => (
             <div key={field}>
@@ -93,10 +101,10 @@ export function JobForm({ job, onSave, onCancel }: JobFormProps) {
             <textarea id={`${id}-notes`} name="notes" rows={3} maxLength={JOB_FIELD_LIMITS.notes} value={values.notes} onChange={(event) => change("notes", event.target.value)} aria-invalid={Boolean(errors.notes)} aria-describedby={errors.notes ? `${id}-notes-error` : `${id}-notes-hint`} placeholder="记录岗位要求、面试安排或下一步计划…" className={`${inputClassName} resize-y`} />
             {errors.notes ? <p id={`${id}-notes-error`} className="mt-1.5 text-xs text-red-700">{errors.notes}</p> : <p id={`${id}-notes-hint`} className="mt-1 text-right text-[11px] text-muted">{values.notes.length} / {JOB_FIELD_LIMITS.notes}</p>}
           </div>
-        </div>
+        </fieldset>
         <div className="flex shrink-0 justify-end gap-3 border-t border-line px-5 py-4 sm:px-6">
-          <button type="button" onClick={onCancel} className="rounded-lg border border-line px-4 py-2.5 text-sm text-secondary hover:bg-[#f4f6f4]">取消</button>
-          <button type="submit" className="rounded-lg bg-brand px-4 py-2.5 text-sm font-medium text-white hover:bg-[#1d6244]">{job ? "保存修改" : "新增岗位"}</button>
+          <button type="button" onClick={onCancel} disabled={pending} className="rounded-lg border border-line px-4 py-2.5 text-sm text-secondary hover:bg-[#f4f6f4]">取消</button>
+          <button type="submit" disabled={pending} className="rounded-lg bg-brand px-4 py-2.5 text-sm font-medium text-white hover:bg-[#1d6244]">{pending ? "正在保存…" : job ? "保存修改" : "新增岗位"}</button>
         </div>
       </form>
     </Modal>

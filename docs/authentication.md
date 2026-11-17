@@ -1,18 +1,20 @@
 # 注册、登录、会话与岗位归属
 
-认证迁移已经由用户执行完成，本阶段只读确认数据库已是最新状态。实际安装 Better Auth / Prisma Adapter **1.7.25**，Prisma **7.10.1**，Next.js **16.4.6**。本阶段没有修改认证服务配置、Schema、已执行迁移或真实环境变量文件，没有新增依赖或岗位数据库写 API。
+认证迁移已经执行完成，实际安装 Better Auth / Prisma Adapter **1.7.25**，Prisma **7.10.1**，Next.js **16.4.6**。当前已扩展邮箱验证码注册、登录及旧密码账号安全验证，配置与兼容说明见 [Email OTP / QQ SMTP](email-otp.md)。密码入口、真实环境变量文件、Schema、迁移和岗位隔离保持兼容；最新全部测试133项通过。私人 Dashboard 已通过 [岗位 REST API](jobs-api.md)接入数据库，详见 [远程工作空间](remote-dashboard.md)。下文保留密码页面阶段的主要设计及历史测试记录。
 
 ## 页面与数据来源
 
 | 地址 | 行为 |
 | --- | --- |
 | / | 转到 /dashboard，由受保护页面决定是否需要登录 |
-| /sign-up | 姓名、邮箱、密码、确认密码注册；已登录用户转到 /dashboard |
-| /sign-in | 邮箱密码登录；已登录用户转到 /dashboard |
-| /dashboard | 服务端验证 Session，匿名或失效会话重定向 /sign-in；显示姓名、邮箱、退出按钮和“岗位数据库接入中” |
+| /sign-up | 可选密码注册或邮箱验证码；已登录用户转到 /dashboard |
+| /sign-in | 可选密码或验证码登录；已登录用户转到 /dashboard |
+| /verify-email | 已登录的未验证邮箱账号，使用验证码验证当前邮箱，保留原密码 |
+| /dashboard | 服务端验证 Session，匿名或失效会话重定向 /sign-in；显示姓名、邮箱、退出按钮和真实私人岗位管理 |
 | /demo | 公开的 localStorage 岗位管理演示，明确提示不属于任何登录账号 |
 | /api/auth/* | 复用现有 Better Auth GET/POST Handler |
 | /api/jobs | 仍为模拟数据 GET API，没有切换到数据库 |
+| /api/me/jobs、/api/me/jobs/[id] | 真实数据库 CRUD，逐请求校验 Session，写入额外要求可信 Origin |
 
 /demo 复用原来的组件、存储键、CRUD、筛选、搜索和排序。移动页面路径不会更改同一浏览器来源下的 localStorage；登录和退出也不会导入、删除或转移演示记录。它们不能冒充当前用户的私人岗位。
 
@@ -56,7 +58,7 @@ SignOutButton → authClient.signOut()
 - 错误密码及不存在的账号使用相同提示。UI 只映射已知错误码和状态，不回显服务端 message、密码、连接串或底层异常。认证服务故障显示安全提示；服务端渲染失败由通用 error.tsx 提供重试。
 - 注册、登录、退出继续使用官方 authClient；没有自行实现密码加密或会话机制。
 
-本阶段没有加入邮箱验证邮件、密码找回或社交登录，保留现有 Better Auth 服务端配置。
+密码页面阶段未加入邮箱验证邮件。当前已加入官方 Email OTP 与 QQ SMTP；仍未开放密码找回或社交登录，旧密码账号的邮箱验证要求原密码会话及邮箱证明，详见 [兼容流程](email-otp.md)。
 
 ## 数据模型与所有者
 
@@ -83,7 +85,7 @@ Adapter 使用单数 user/session/account/verification delegate，Prisma @@map �
 
 ## 已执行迁移
 
-两个迁移都已应用。当前只读 migrate status 为 up to date；原 Schema、服务端认证配置及所有迁移文件的哈希与本阶段开始一致。不要重写历史迁移、重复手工建表、执行 reset 或结构推送。后续结构变化另建迁移。
+三份迁移（初始岗位、认证归属、CSV批次）均已应用。Email OTP 阶段不需要新增模型或迁移，Schema 与历史迁移哈希未变化；只扩展现有认证配置。不要重写历史迁移、重复手工建表、执行 reset 或结构推送。后续结构变化另建迁移。
 
 ## 运行与测试
 
@@ -130,9 +132,9 @@ test:auth:http 只允许本地服务器，先核对应用数据库和账号，�
 2. 在 /sign-up 提交空表单、非法邮箱、短密码、不一致确认密码，应阻止提交并提示。使用测试邮箱完成注册，按钮请求期间禁用，按实际会话进入工作空间或登录页。
 3. 退出后尝试错误密码和不存在账号，均显示友好提示；正确登录后显示自己的姓名与邮箱，刷新仍保持登录。
 4. 点击退出，重新访问 /dashboard 不能看到工作空间。开发者工具中不应出现自行保存的密码或认证 localStorage 项。
-5. 在 /demo 新增/修改一条演示岗位，刷新确认保留；登录/退出不应把它带入 /dashboard。“岗位数据库接入中”始终明确可见。
+5. 在 /dashboard 新增岗位、刷新、退出再登录，记录仍应存在；在 /demo 新增的演示岗位则不能出现在私人列表中。
 
-数据库双用户隔离已由 Repository 事务测试验证；跨会话岗位 HTTP CRUD 验收仍留到受保护岗位接口接入阶段。不要为测试临时开放未经授权的数据库写接口。
+数据库双用户隔离已由 Repository 事务测试、17 项岗位 HTTP 测试和真实双用户浏览器验收验证。前端观察 Session 仅用于清理旧视图，不能替代服务端授权；viewerId 不发送到岗位 API，不决定所有者。详见 [远程 Dashboard](remote-dashboard.md)。
 
 ## 官方参考
 

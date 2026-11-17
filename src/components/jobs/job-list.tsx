@@ -39,29 +39,30 @@ interface JobListProps {
   onCreate: () => void;
   onEdit: (job: Job) => void;
   onDelete: (job: Job) => void;
+  disabled?: boolean;
 }
 
-function JobActions({ job, onEdit, onDelete }: Pick<JobListProps, "onEdit" | "onDelete"> & { job: Job }) {
+function JobActions({ job, onEdit, onDelete, disabled }: Pick<JobListProps, "onEdit" | "onDelete" | "disabled"> & { job: Job }) {
   return (
     <div className="flex items-center justify-end gap-1">
-      <button type="button" aria-label={`编辑${job.company}的${job.position}`} onClick={() => onEdit(job)} className="flex min-h-8 items-center gap-1.5 rounded-md px-2 text-xs text-secondary hover:bg-brand-light hover:text-brand">
+      <button type="button" disabled={disabled} aria-label={`编辑${job.company}的${job.position}`} onClick={() => onEdit(job)} className="flex min-h-8 items-center gap-1.5 rounded-md px-2 text-xs text-secondary hover:bg-brand-light hover:text-brand">
         <Icon name="edit" className="size-3.5" /><span className="md:sr-only xl:not-sr-only">编辑</span>
       </button>
-      <button type="button" aria-label={`删除${job.company}的${job.position}`} onClick={() => onDelete(job)} className="flex min-h-8 items-center gap-1.5 rounded-md px-2 text-xs text-secondary hover:bg-red-50 hover:text-red-700">
+      <button type="button" disabled={disabled} aria-label={`删除${job.company}的${job.position}`} onClick={() => onDelete(job)} className="flex min-h-8 items-center gap-1.5 rounded-md px-2 text-xs text-secondary hover:bg-red-50 hover:text-red-700">
         <Icon name="trash" className="size-3.5" /><span className="md:sr-only xl:not-sr-only">删除</span>
       </button>
     </div>
   );
 }
 
-export function JobList({ jobs, isEmpty, onReset, onCreate, onEdit, onDelete }: JobListProps) {
+export function JobList({ jobs, isEmpty, onReset, onCreate, onEdit, onDelete, disabled = false }: JobListProps) {
   if (jobs.length === 0) {
     return (
       <div id="job-results" className="flex min-h-72 flex-col items-center justify-center px-5 py-12 text-center">
         <span className="mb-4 flex size-12 items-center justify-center rounded-full bg-brand-light text-brand"><Icon name="search" className="size-5" /></span>
         <h3 className="text-sm font-semibold">{isEmpty ? "还没有岗位记录" : "没有找到匹配的岗位"}</h3>
         <p className="mt-2 text-xs leading-6 text-secondary">{isEmpty ? "从一个新的机会开始，记录你的第一份投递。" : "试试其他关键词，或调整投递状态。"}</p>
-        <button type="button" onClick={isEmpty ? onCreate : onReset} className="mt-5 rounded-lg border border-line px-4 py-2 text-xs font-medium text-brand transition-colors hover:bg-brand-light">{isEmpty ? "添加第一个岗位" : "重置所有筛选"}</button>
+        <button type="button" onClick={isEmpty ? onCreate : onReset} disabled={isEmpty && disabled} className="mt-5 rounded-lg border border-line px-4 py-2 text-xs font-medium text-brand transition-colors hover:bg-brand-light">{isEmpty ? "添加第一个岗位" : "重置所有筛选"}</button>
       </div>
     );
   }
@@ -98,7 +99,7 @@ export function JobList({ jobs, isEmpty, onReset, onCreate, onEdit, onDelete }: 
               <td className="px-3 py-[19px]">
                 <ApplicationDate date={job.appliedAt} />
               </td>
-              <td className="px-3 py-[19px] pr-5"><JobActions job={job} onEdit={onEdit} onDelete={onDelete} /></td>
+              <td className="px-3 py-[19px] pr-5"><JobActions job={job} onEdit={onEdit} onDelete={onDelete} disabled={disabled} /></td>
             </tr>
           ))}
         </tbody>
@@ -120,7 +121,7 @@ export function JobList({ jobs, isEmpty, onReset, onCreate, onEdit, onDelete }: 
               <span className="text-[11px] text-muted">投递日期</span>
               <ApplicationDate date={job.appliedAt} />
             </div>
-            <div className="mt-2"><JobActions job={job} onEdit={onEdit} onDelete={onDelete} /></div>
+            <div className="mt-2"><JobActions job={job} onEdit={onEdit} onDelete={onDelete} disabled={disabled} /></div>
           </li>
         ))}
       </ul>

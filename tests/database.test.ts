@@ -10,26 +10,21 @@ import { toJobWriteData } from "@/lib/job-mapper";
 import { disconnectPrisma, getPrisma } from "@/lib/prisma";
 import { createJobRepository } from "@/repositories/job-repository";
 import type { JobInput } from "@/types/job";
+import { assertTestDatabase } from "./helpers/test-database";
 
 nextEnv.loadEnvConfig(process.cwd(), true, {
   info: () => {},
   error: () => { throw new DatabaseAccessError("CONFIGURATION_ERROR"); },
 });
 
-const authSchemaReady = await isAuthSchemaReady();
-const migrationSkip = authSchemaReady ? false : "Better Auth / userId 迁移尚未执行，禁止测试写入；不自动迁移。";
 
 type Repository = ReturnType<typeof createJobRepository>;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 let serverVersion = "";
 
 before(async () => {
-  if (!authSchemaReady) return;
-  const [connection] = await withDatabaseErrors(() => getPrisma().$queryRaw<{
-    database: string; role: string; version: string;
-  }[]>`SELECT current_database() AS database, current_user AS role, current_setting('server_version') AS version`);
-  assert.equal(connection?.database, "jobflow_db", "仅允许在指定的应用数据库验证写入");
-  assert.equal(connection?.role, "jobflow_app", "数据库验证必须使用应用账号");
+  const connection = await assertTestDatabase();
+  assert.ok(await isAuthSchemaReady(), "认证迁移未就绪；测试必须失败，不能跳过。");
   serverVersion = connection.version;
   // 首次真实读取通过 Repository 的脱敏边界；不输出连接串或业务记录。
 });
@@ -78,8 +73,8 @@ function input(appliedAt = "2024-02-29"): JobInput {
   };
 }
 
-test("真实查询可用，Client 单例复用，列表按日期及 ID 排序", { skip: migrationSkip }, async (context) => {
-  context.diagnostic(`数据库 jobflow_db，账号 jobflow_app，PostgreSQL ${serverVersion}`);
+test("真实查询可用，Client 单例复用，列表按日期及 ID 排序", async (context) => {
+  context.diagnostic(`PostgreSQL ${serverVersion}，已核验隔离测试目标及应用账号`);
   assert.equal(getPrisma(), getPrisma());
   await withRollback(async (repository, _tx, ids) => {
     ids.push((await repository.createJob(input("2026-11-17"))).id);
@@ -91,7 +86,7 @@ test("真实查询可用，Client 单例复用，列表按日期及 ID 排序", 
   });
 });
 
-test("真实数据库新增、查询、更新、删除，保持 ID 并清理所有测试记录", { timeout: 30000, skip: migrationSkip }, async () => {
+test("真实数据库新增、查询、更新、删除，保持 ID 并清理所有测试记录", { timeout: 30000 }, async () => {
   await withRollback(async (repository, tx, ids) => {
     const values = input();
     const created = await repository.createJob(values);
@@ -133,7 +128,7 @@ test("真实数据库新增、查询、更新、删除，保持 ID 并清理所�
   });
 });
 
-test("PostgreSQL DATE 在闰日、跨年和夏令时边界保持原日期", { timeout: 30000, skip: migrationSkip }, async (context) => {
+test("PostgreSQL DATE 在闰日、跨年和夏令时边界保持原日期", { timeout: 30000 }, async (context) => {
   context.diagnostic(`测试时区：${Intl.DateTimeFormat().resolvedOptions().timeZone}`);
   await withRollback(async (repository, _tx, ids) => {
     for (const date of ["0001-01-01", "1900-02-28", "2000-02-29", "2024-02-29", "2026-01-01", "2026-03-08", "2026-11-01", "2026-12-31", "9999-12-31"]) {
@@ -145,7 +140,7 @@ test("PostgreSQL DATE 在闰日、跨年和夏令时边界保持原日期", { ti
   });
 });
 
-test("连接失败返回安全错误，不携带底层异常或连接信息", { timeout: 10000, skip: migrationSkip }, async () => {
+test("连接失败返回安全错误，不携带底层异常或连接信息", { timeout: 10000 }, async () => {
   const unavailable = new PrismaClient({
     adapter: new PrismaPg({
       connectionString: "postgresql://jobflow_app:TEST_PLACEHOLDER@127.0.0.1:1/jobflow_db",
@@ -170,7 +165,7 @@ test("连接失败返回安全错误，不携带底层异常或连接信息", { 
   }
 });
 
-test("两个用户不能读取或修改对方岗位，未归属数据不可见，不能伪造所有者", { timeout: 30000, skip: migrationSkip }, async () => {
+test("两个用户不能读取或修改对方岗位，未归属数据不可见，不能伪造所有者", { timeout: 30000 }, async () => {
   await withRollback(async (repositoryA, tx, ids, userIds) => {
     const userB = await tx.user.create({ data: { name: "Integration B", email: `${randomUUID()}@example.invalid` } });
     userIds.push(userB.id);

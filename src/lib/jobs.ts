@@ -1,4 +1,4 @@
-import { JOB_STATUSES, type Job, type JobFieldErrors, type JobInput, type JobStatus } from "@/types/job";
+import { JOB_STATUSES, type Job, type JobFieldErrors, type JobInput, type JobPatchInput, type JobStatus } from "@/types/job";
 
 export const JOB_FIELD_LIMITS = { company: 100, position: 100, location: 100, notes: 2000 } as const;
 
@@ -12,7 +12,7 @@ export function isCalendarDate(value: string): boolean {
   return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 
-export function normalizeJobInput(input: JobInput): JobInput {
+export function normalizeJobInput<T>(input: Omit<JobInput, "status"> & { status: T }): Omit<JobInput, "status"> & { status: T } {
   return {
     company: input.company.trim(),
     position: input.position.trim(),
@@ -23,19 +23,34 @@ export function normalizeJobInput(input: JobInput): JobInput {
   };
 }
 
-export function validateJobInput(input: JobInput): JobFieldErrors {
+function validateJobFields(input: Omit<JobPatchInput, "status"> & { status?: unknown }, partial: boolean): JobFieldErrors {
   const errors: JobFieldErrors = {};
   const requiredFields = { company: "公司名称", position: "职位名称", location: "工作地点" } as const;
 
   for (const field of ["company", "position", "location"] as const) {
-    if (!input[field].trim()) errors[field] = `请填写${requiredFields[field]}`;
-    else if (input[field].trim().length > JOB_FIELD_LIMITS[field]) errors[field] = `${requiredFields[field]}最多 ${JOB_FIELD_LIMITS[field]} 个字符`;
+    if (partial && !Object.hasOwn(input, field)) continue;
+    const value = input[field];
+    if (typeof value !== "string" || !value.trim()) errors[field] = `请填写${requiredFields[field]}`;
+    else if (value.trim().length > JOB_FIELD_LIMITS[field]) errors[field] = `${requiredFields[field]}最多 ${JOB_FIELD_LIMITS[field]} 个字符`;
   }
-  if (!isJobStatus(input.status)) errors.status = "请选择有效的投递状态";
-  if (!input.appliedAt) errors.appliedAt = "请选择投递日期";
-  else if (!isCalendarDate(input.appliedAt)) errors.appliedAt = "请填写有效日期，格式为 YYYY-MM-DD";
-  if (input.notes.length > JOB_FIELD_LIMITS.notes) errors.notes = `备注最多 ${JOB_FIELD_LIMITS.notes} 个字符`;
+  if ((!partial || Object.hasOwn(input, "status")) && !isJobStatus(input.status)) errors.status = "请选择有效的投递状态";
+  if (!partial || Object.hasOwn(input, "appliedAt")) {
+    if (!input.appliedAt) errors.appliedAt = "请选择投递日期";
+    else if (!isCalendarDate(input.appliedAt)) errors.appliedAt = "请填写有效日期，格式为 YYYY-MM-DD";
+  }
+  if (!partial || Object.hasOwn(input, "notes")) {
+    if (typeof input.notes !== "string") errors.notes = "备注格式不正确";
+    else if (input.notes.length > JOB_FIELD_LIMITS.notes) errors.notes = `备注最多 ${JOB_FIELD_LIMITS.notes} 个字符`;
+  }
   return errors;
+}
+
+export function validateJobInput(input: Omit<JobInput, "status"> & { status: unknown }): JobFieldErrors {
+  return validateJobFields(input, false);
+}
+
+export function validateJobPatchInput(input: JobPatchInput): JobFieldErrors {
+  return validateJobFields(input, true);
 }
 
 // JSON.parse 的结果是 unknown：TypeScript 类型不会自动校验浏览器里的数据。

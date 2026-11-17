@@ -4,6 +4,7 @@ import { after, before, test } from "node:test";
 import nextEnv from "@next/env";
 import { withDatabaseErrors } from "@/lib/database-error";
 import { disconnectPrisma, getPrisma } from "@/lib/prisma";
+import { assertTestDatabase } from "./helpers/test-database";
 
 // 只在本地应用数据库创建一个唯一测试账号，finally 按精确邮箱/UUID 清理。
 // 不输出响应体、Cookie、密码、连接串，不修改任何环境变量文件。
@@ -12,10 +13,7 @@ const baseURL = new URL(process.env.API_BASE_URL ?? "http://localhost:3000");
 if (!["localhost", "127.0.0.1", "[::1]"].includes(baseURL.hostname)) throw new Error("认证集成测试只允许访问本地测试服务器。");
 
 before(async () => {
-  const [context] = await withDatabaseErrors(() => getPrisma().$queryRaw<{ database: string; role: string }[]>`
-    SELECT current_database() AS database, current_user AS role
-  `);
-  assert.ok(context?.database === "jobflow_db" && context.role === "jobflow_app", "仅允许使用指定的应用数据库账号测试");
+  await assertTestDatabase();
 });
 after(async () => { await disconnectPrisma(); });
 
@@ -74,7 +72,7 @@ test("真实注册、登录、错误凭据及退出后的旧 Session 撤销；�
     const dashboard = await request("/dashboard", { headers: { cookie: registeredCookie } });
     assert.equal(dashboard.status, 200);
     const html = await dashboard.text();
-    assert.ok(html.includes(name) && html.includes(email) && html.includes("岗位数据库接入中"));
+    assert.ok(html.includes(name) && html.includes(email) && html.includes("我的工作空间"));
     assert.ok(!html.includes("正在读取本地岗位记录"), "受保护页面不得混入本地演示岗位");
 
     const signOut = await post("/api/auth/sign-out", {}, registeredCookie);

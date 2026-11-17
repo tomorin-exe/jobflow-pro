@@ -1,11 +1,11 @@
 import "server-only";
 import { Prisma } from "@/generated/prisma/client";
 import { DatabaseAccessError, withDatabaseErrors } from "@/lib/database-error";
-import { toJobRecord, toJobWriteData } from "@/lib/job-mapper";
+import { toJobRecord, toJobWriteData, toJobPatchWriteData } from "@/lib/job-mapper";
 import { getPrisma } from "@/lib/prisma";
 import { requireUserId } from "@/lib/session";
 import { AuthError } from "@/lib/auth-error";
-import type { JobInput } from "@/types/job";
+import type { JobInput, JobPatchInput, JobStatus } from "@/types/job";
 import type { JobRecord } from "@/types/job-record";
 
 type JobDatabase = Pick<Prisma.TransactionClient, "job">;
@@ -20,7 +20,7 @@ function isNotFound(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2025";
 }
 
-/** 默认信任服务端 Session；注入解析函数只供可信服务端测试，绝不能接收客户端 userId。 */
+/** 默认验证服务端 Session；也可注入已验证的请求身份或测试身份，绝不能接收客户端 userId。 */
 export function createJobRepository(getDatabase: () => JobDatabase = getPrisma, resolveUserId: () => Promise<string> = requireUserId) {
   async function owner() {
     const id = await resolveUserId();
@@ -30,10 +30,10 @@ export function createJobRepository(getDatabase: () => JobDatabase = getPrisma, 
     return id;
   }
   return {
-    async getAllJobs(): Promise<JobRecord[]> {
+    async getAllJobs(status?: JobStatus): Promise<JobRecord[]> {
       const userId = await owner();
       return withDatabaseErrors(async () => {
-        const jobs = await getDatabase().job.findMany({ where: { userId }, orderBy: [{ appliedAt: "desc" }, { id: "asc" }] });
+        const jobs = await getDatabase().job.findMany({ where: { userId, ...(status ? { status } : {}) }, orderBy: [{ appliedAt: "desc" }, { id: "asc" }] });
         return jobs.map(toJobRecord);
       });
     },
@@ -55,11 +55,11 @@ export function createJobRepository(getDatabase: () => JobDatabase = getPrisma, 
       });
     },
 
-    async updateJob(id: string, input: JobInput): Promise<JobRecord | null> {
+    async updateJob(id: string, input: JobPatchInput): Promise<JobRecord | null> {
       const userId = await owner();
       return withDatabaseErrors(async () => {
         validateId(id);
-        const data = toJobWriteData(input);
+        const data = toJobPatchWriteData(input);
         try {
           return toJobRecord(await getDatabase().job.update({ where: { id, userId }, data }));
         } catch (error) {

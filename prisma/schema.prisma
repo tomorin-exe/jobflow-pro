@@ -49,6 +49,7 @@ model User {
   sessions      Session[]
   accounts      Account[]
   jobs          Job[]
+  jobImports    JobImportBatch[]
 
   @@map("users")
 }
@@ -101,4 +102,20 @@ model Verification {
   @@index([identifier])
   @@index([expiresAt])
   @@map("verifications")
+}
+
+// 与岗位同事务保存幂等结果；即使岗位后来被删除，重试也不重新创建。
+model JobImportBatch {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String   @db.Uuid
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  requestId   String   @db.Uuid
+  requestHash String   @db.Char(64)
+  jobIds      String[] @db.Uuid
+  rowNumbers  Int[]
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([userId, requestId])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("job_import_batches")
 }

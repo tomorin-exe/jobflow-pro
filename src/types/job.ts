@@ -21,5 +21,7 @@ export interface Job {
 
 // 表单不接收 ID，避免编辑岗位时意外改变记录身份。
 export type JobInput = Omit<Job, "id">;
+/** PATCH 仅更新提供的业务字段；所有者与元数据不属于输入类型。 */
+export type JobPatchInput = Partial<JobInput>;
 export type JobFieldErrors = Partial<Record<keyof JobInput, string>>;
 export type JobMutationResult = { ok: true } | { ok: false; error: string };

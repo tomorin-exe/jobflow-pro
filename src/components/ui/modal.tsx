@@ -7,9 +7,11 @@ interface ModalProps {
   children: ReactNode;
   onClose: () => void;
   role?: "dialog" | "alertdialog";
+  busy?: boolean;
+  wide?: boolean;
 }
 
-export function Modal({ title, description, children, onClose, role = "dialog" }: ModalProps) {
+export function Modal({ title, description, children, onClose, role = "dialog", busy = false, wide = false }: ModalProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const descriptionId = useId();
@@ -37,8 +39,9 @@ export function Modal({ title, description, children, onClose, role = "dialog" }
       role={role}
       aria-labelledby={titleId}
       aria-describedby={descriptionId}
-      onCancel={(event) => { event.preventDefault(); onClose(); }}
-      className="fixed top-1/2 right-auto bottom-auto left-1/2 m-0 max-h-[calc(100dvh_-_2rem)] w-[calc(100%_-_2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-2xl border border-line bg-white p-0 text-primary shadow-2xl backdrop:bg-primary/35"
+      onCancel={(event) => { event.preventDefault(); if (!busy) onClose(); }}
+      aria-busy={busy}
+      className={`fixed top-1/2 right-auto bottom-auto left-1/2 m-0 max-h-[calc(100dvh_-_2rem)] w-[calc(100%_-_2rem)] ${wide ? "max-w-5xl" : "max-w-lg"} -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-2xl border border-line bg-white p-0 text-primary shadow-2xl backdrop:bg-primary/35`}
     >
       <div className="flex max-h-[calc(100dvh_-_2.25rem)] flex-col">
         <div className="flex shrink-0 items-start justify-between gap-4 border-b border-line px-5 py-5 sm:px-6">
@@ -46,7 +49,7 @@ export function Modal({ title, description, children, onClose, role = "dialog" }
             <h2 id={titleId} className="text-lg font-semibold">{title}</h2>
             <p id={descriptionId} className="mt-1.5 text-xs leading-5 text-secondary [overflow-wrap:anywhere]">{description}</p>
           </div>
-          <button type="button" aria-label="关闭弹窗" onClick={onClose} className="flex size-8 shrink-0 items-center justify-center rounded-lg text-secondary hover:bg-brand-light">
+          <button type="button" aria-label="关闭弹窗" onClick={onClose} disabled={busy} className="flex size-8 shrink-0 items-center justify-center rounded-lg text-secondary hover:bg-brand-light">
             <Icon name="close" className="size-4" />
           </button>
         </div>

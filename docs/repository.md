@@ -1,8 +1,8 @@
 # 岗位 Repository 与真实数据库验证
 
-当前连接是 PostgreSQL 18.7、`jobflow_db`、应用账号 `jobflow_app`。初始及认证/岗位归属迁移均已执行，本阶段只读确认 up to date，不修改 Schema 或迁移。认证页面已接入 Session，岗位业务记录未切换来源。见 [认证和页面说明](authentication.md)。
+本地参考配置为 PostgreSQL 18、`jobflow_db` 和非管理员账号 `jobflow_app`。CI使用独立临时库和账号，见 [CI安全边界](ci.md)。私人 Dashboard 通过受保护岗位 API 复用本层，演示数据保持独立；CI阶段不修改 Repository、Schema 或历史迁移。见 [岗位 API](jobs-api.md)、[远程 Dashboard](remote-dashboard.md)。
 
-`/demo` 使用 localStorage，`/dashboard` 显示受保护欢迎页，`GET /api/jobs` 仍使用模拟数据。Repository 仅供服务端使用，尚未通过公开写接口暴露。
+`/demo` 使用 localStorage，`/dashboard` 通过受保护的 `/api/me/jobs` 实现真实私人 CRUD，`GET /api/jobs` 仍使用模拟数据。Repository 仅供服务端使用，前端不能直接导入数据库模块。
 
 ## 数据流与文件职责
 
@@ -30,17 +30,17 @@ Prisma Client 是根据 schema 生成的类型安全查询工具，`job.findMany
 
 | 方法 | 输入 | 返回 |
 | --- | --- | --- |
-| `getAllJobs()` | 无 | 当前用户的 `JobRecord[]`，日期降序、相同日期按 ID 升序 |
+| `getAllJobs(status?)` | 可选 JobStatus | 当前用户的 `JobRecord[]`，数据库同时限定用户和可选状态，日期降序、相同日期按 ID 升序 |
 | `getJobById(id)` | UUID | 当前用户的 `JobRecord`，不存在或属于他人时为 `null` |
 | `createJob(input)` | 现有 `JobInput` | 新建的 `JobRecord`，UUID 由 Prisma 生成 |
-| `updateJob(id, input)` | UUID + 完整 JobInput | 更新后的 `JobRecord`，不存在或属于他人时为 `null` |
+| `updateJob(id, input)` | UUID + JobPatchInput，完整 JobInput 仍兼容 | 更新后的 `JobRecord`，不存在或属于他人时为 `null` |
 | `deleteJob(id)` | UUID | 删除的 `JobRecord`，不存在或属于他人时为 `null` |
 
-`updateJob` 接受完整表单输入，本阶段不是公开 PATCH 接口。ID、userId、createdAt、updatedAt 不接受输入覆盖；写入时使用显式字段白名单。创建时由服务端强制添加会话 userId；读取、更新、删除使用 `{ id, userId }`，由同一条数据库操作限制所有者，避免先检查再修改的竞态。未归属的 `userId = NULL` 记录对所有用户不可见。
+`updateJob` 支持部分字段，完整表单输入仍可使用；只写实际提供的字段，不先读整条旧记录再覆盖。ID、userId、createdAt、updatedAt 不接受输入覆盖。创建时由服务端强制添加会话 userId；读取、更新、删除使用 `{ id, userId }`，由同一条数据库操作限制所有者。未归属的 `userId = NULL` 记录对所有用户不可见。
 
 默认导出的五个方法延迟获取单例，每次操作先验证会话，不在导入时访问数据库。未登录时抛出 `AuthError(UNAUTHORIZED)`，不访问岗位表；认证配置/结构不可用时安全失败，不退化为全表查询。
 
-`createJobRepository(() => tx, async () => testUser.id)` 仅供可信服务端测试注入事务及其创建的测试用户；第二个参数是授权解析函数，不是面向客户端的 userId 参数。生产请求使用默认 `requireUserId`，不得把 body、query、URL 或自定义请求头中的用户 ID 注入该函数。浏览器不能导入本模块。所有代码中直接调用 Prisma 的管理或维护脚本仍需单独审核，Repository 不是 PostgreSQL RLS。
+`createJobRepository(() => tx, async () => testUser.id)` 可注入可信测试身份和事务。新的 withJobApi 则先验证真实 Better Auth Session，再建立仅绑定本次 session.user.id 的 Repository，避免重复会话查询；没有全局当前用户缓存。第二个参数是可信授权解析函数，绝不能注入 body、query、URL 或自定义头中的用户 ID。默认导出的函数仍通过 requireUserId 验证身份。浏览器不能导入本模块；管理脚本的直接 Prisma 调用仍需单独审核，Repository 不是 PostgreSQL RLS。
 
 ## DATE 与时区
 
@@ -69,7 +69,7 @@ Prisma Client 是根据 schema 生成的类型安全查询工具，`job.findMany
 
 ## 运行数据库验证
 
-前提：PostgreSQL 已运行、`.env.local` 配置正确，认证迁移已执行。测试首先只读检查认证表与 jobs.userId；缺少结构时明确跳过 5 项数据库测试，不自动迁移。结构就绪时运行 5 项真实数据库集成和 17 项单元测试，包含表单、UUID/迁移一致性与真实 Adapter 离线测试。独立的 Repository 测试不需要真实认证密钥或浏览器 Cookie，用户身份由受控事务夹具提供。
+前提：PostgreSQL 已运行、配置正确、迁移已执行。测试先核对明确的本地/CI目标、非管理员账号、CI数据库标记及认证结构；目标错误或缺少结构时失败，不跳过或自动迁移。test:db共5项真实数据库集成和17项单元测试，包含表单、UUID/迁移一致性与真实Adapter离线测试。独立Repository测试不需要真实认证密钥或浏览器Cookie，用户身份由受控事务夹具提供。
 
 ```powershell
 npm.cmd run test:db
@@ -101,7 +101,8 @@ npm.cmd run test:db
 
 - `npm.cmd run test:db`：22/22 通过，包括 5 项真实数据库集成，无失败或跳过。
 - 独立 `test:auth:http` 为 2/2，覆盖真实 Cookie 和认证 HTTP 生命周期；它精确清理唯一测试用户，不修改其他业务数据。
-- 岗位演示和模拟 GET API 数据来源未切换，也没有开放岗位写 API；工作空间已通过服务端 Session 保护。
+- 新增 `test:jobs` 6/6、`test:jobs:http` 17/17，覆盖真实双用户 CRUD、部分更新、CSRF、错误脱敏和旧会话撤销；测试用户及岗位按精确 ID 清理。
+- 新增远程状态测试 10/10 通过，私人工作空间已接入数据库 API，并通过真实浏览器持久化和 A/B 隔离验收；演示及模拟 API 保持独立。
 
 ## 上一阶段结果（历史）
 

@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Node 24 / PostgreSQL 18
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CI: 'true'
+      NEXT_TELEMETRY_DISABLED: '1'
+      CI_BOOTSTRAP_PASSWORD: jobflow-service-${{ github.run_id }}-${{ github.run_attempt }}
+      QQ_SMTP_USER: ''
+      QQ_SMTP_AUTH_CODE: ''
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: jobflow_ci_admin
+          POSTGRES_PASSWORD: jobflow-service-${{ github.run_id }}-${{ github.run_attempt }}
+          POSTGRES_DB: postgres
+        ports:
+          - 127.0.0.1:5432:5432
+        options: >-
+          --health-cmd "pg_isready -U jobflow_ci_admin -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - name: Checkout source and history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Setup Node.js 24
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Generate job-only test configuration
+        run: node scripts/ci-environment.mjs
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Check repository safety and workflow
+        run: |
+          npm run audit:repo
+          npm run check:ci
+      - name: Prepare disposable PostgreSQL database
+        run: npm run ci:db:prepare
+      - name: Generate and validate Prisma Client
+        run: |
+          npm run prisma:generate
+          npm run prisma:validate
+      - name: Deploy migrations to the verified CI database only
+        run: npm run ci:db:migrate
+      - name: ESLint
+        run: npm run lint
+      - name: TypeScript
+        run: npm run typecheck
+      - name: Production build
+        run: npm run build
+      - name: All unit, database, mocked SMTP and HTTP tests
+        run: npm run test:all

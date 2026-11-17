@@ -1,8 +1,8 @@
 import "server-only";
 import type { Job as PrismaJob, Prisma } from "@/generated/prisma/client";
 import { DatabaseAccessError } from "@/lib/database-error";
-import { isCalendarDate, isJobStatus, normalizeJobInput, validateJobInput } from "@/lib/jobs";
-import type { JobInput } from "@/types/job";
+import { isCalendarDate, isJobStatus, normalizeJobInput, validateJobInput, validateJobPatchInput } from "@/lib/jobs";
+import type { JobInput, JobPatchInput } from "@/types/job";
 import type { JobRecord } from "@/types/job-record";
 
 export function toDatabaseDate(value: string): Date {
@@ -38,6 +38,26 @@ export function toJobWriteData(input: JobInput): Pick<Prisma.JobUncheckedCreateI
     appliedAt: toDatabaseDate(values.appliedAt),
     notes: values.notes,
   };
+}
+
+/** 仅输出实际提供的字段，使 PATCH 无需先读记录，也不会覆盖并发更新的其他字段。 */
+export function toJobPatchWriteData(input: JobPatchInput): Partial<ReturnType<typeof toJobWriteData>> {
+  const fields = ["company", "position", "location", "status", "appliedAt", "notes"] as const;
+  if (typeof input !== "object" || input === null || Array.isArray(input)
+    || !fields.some((field) => Object.hasOwn(input, field))
+    || !fields.every((field) => !Object.hasOwn(input, field) || typeof input[field] === "string")) {
+    throw new DatabaseAccessError("INVALID_INPUT");
+  }
+  const firstError = Object.values(validateJobPatchInput(input))[0];
+  if (firstError) throw new DatabaseAccessError("INVALID_INPUT", firstError);
+  const data: Partial<ReturnType<typeof toJobWriteData>> = {};
+  for (const field of ["company", "position", "location", "notes"] as const) {
+    const value = input[field];
+    if (Object.hasOwn(input, field) && typeof value === "string") data[field] = value.trim();
+  }
+  if (Object.hasOwn(input, "status") && isJobStatus(input.status)) data.status = input.status;
+  if (Object.hasOwn(input, "appliedAt") && typeof input.appliedAt === "string") data.appliedAt = toDatabaseDate(input.appliedAt);
+  return data;
 }
 
 export function toJobRecord(job: PrismaJob): JobRecord {

@@ -1,6 +1,6 @@
 # PostgreSQL 与 Prisma
 
-**初始及 Better Auth / 岗位归属迁移均已执行，当前只读迁移检查为 up to date。** 注册、登录、退出和服务端保护页面已接入认证，岗位演示在 `/demo`，模拟 API 仍不读取业务库。本阶段不修改 Schema、迁移或真实环境变量文件。详见 [认证和页面说明](authentication.md)、[Repository 与数据库测试](repository.md)。
+仓库包含岗位、认证归属及CSV批次三份迁移；本地参考环境已应用，新环境仍需按README审核后部署。私人Dashboard和受保护API已接入真实数据库，`/demo`及模拟API保持独立。CI使用独立临时数据库，自动迁移前核验任务标记，不连接本机开发库；见 [CI说明](ci.md)、[认证说明](authentication.md)和[Repository文档](repository.md)。
 
 ## 版本与配置选择
 
@@ -64,17 +64,13 @@ Prisma 模型名为 `Job`，通过 `@@map("jobs")` 对应数据库表 `jobs`。�
 
 准备阶段使用 [官方离线 diff 流程](https://docs.prisma.io/docs/orm/v7/prisma-migrate/getting-started)生成 [首次迁移 SQL](../prisma/migrations/20261116193829_init_jobs/migration.sql)。用户已完成执行，本阶段只读取迁移状态，没有重建表或修改该文件。`migration_lock.toml` 锁定 provider 为 PostgreSQL。
 
-生成方式如下；该命令已执行，**无需再次执行或覆盖已审核的迁移文件**：
-
-```powershell
-node node_modules/prisma/build/index.js migrate diff --from-empty --to-schema prisma/schema.prisma --script --output prisma/migrations/20261116193829_init_jobs/migration.sql
-```
+初始迁移来自当时的空模型差异快照。当前Schema已扩展，不应再使用空模型diff重新生成或覆盖该历史文件；后续结构变更新建迁移，先审查SQL再部署。
 
 使用 CLI 的 `--output` 写 UTF-8 文件，避免旧版 Windows PowerShell 的 `>` 重定向写出 UTF-16 SQL。SQL 仅包含创建 public schema、JobStatus 枚举、jobs 表和两个索引，没有删除或清空数据的语句。
 
 初始 SQL 以空模型为基线，现有库已经完成该迁移，不应再次手工执行建表 SQL。今后需要变更模型时应另建迁移，不修改已经执行的历史文件。
 
-本阶段没有执行迁移、重置或结构推送，也没有导入种子数据。认证结构已应用，真实 CRUD 和隔离测试使用独立事务并回滚；认证 HTTP 测试仅创建并精确清理唯一测试用户。模拟 ID 如 `job-001` 不是 UUID，不能原样作为数据库 UUID 导入；未来切换数据来源仍需单独设计导入与归属确认。
+CI阶段不更改本地结构，不重置或推送结构。真实CRUD和隔离测试使用独立事务或按明确ID清理；CI只部署已提交迁移到全新测试库。模拟ID如`job-001`不能用作数据库UUID；CSV导入由服务端生成UUID，经过预览与人工确认，不直接复制localStorage记录。
 
 ## 服务端 Client
 
@@ -85,7 +81,7 @@ node node_modules/prisma/build/index.js migrate diff --from-empty --to-schema pr
 - 缺失配置、连接协议不对或使用 `postgres` 时抛出安全的 `CONFIGURATION_ERROR`，不显示原始连接信息。
 - 生产环境使用模块缓存；开发热更新通过 `globalThis` 复用，避免反复创建连接池。
 - 连接超时为 5 秒、单实例连接池上限为 5，`log: []` 避免 Prisma 自动输出底层敏感异常。
-- Repository 调用此模块；页面、localStorage Hook 和模拟 API 仍未调用。脚本结束时通过 `disconnectPrisma()` 关闭连接，请勿在每个请求后断开。
+- 私人页面通过受保护API使用Repository；localStorage演示和模拟API不访问数据库。脚本结束时通过`disconnectPrisma()`关闭连接，请勿在每个请求后断开。
 
 ## 初始接入阶段验证记录（历史）
 
