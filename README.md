@@ -1,6 +1,6 @@
 # JobFlow Pro
 
-基于 Next.js App Router、TypeScript 和 Tailwind CSS 的求职投递管理系统。前端 CRUD 继续使用 localStorage，两个只读 REST API 继续读取模拟数据。初始迁移已执行；本阶段准备 Better Auth 邮箱密码认证和岗位用户归属，**新增认证迁移尚未执行**。默认 Repository 已要求可信服务端会话，页面没有接入认证或数据库。
+基于 Next.js App Router、TypeScript 和 Tailwind CSS 的求职投递管理系统。已接入 Better Auth 注册、登录和退出，`/dashboard` 使用可信服务端 Session 保护，目前显示账号欢迎页。原 localStorage 岗位 CRUD 保留在明确标识的 `/demo`；两个只读岗位/健康 API 保持原样。认证迁移已执行，岗位 Repository 已按用户隔离，页面尚未接入岗位数据库 CRUD。
 
 ## 本地运行
 
@@ -15,6 +15,8 @@ npm run dev
 
 访问终端显示的本地地址，通常为 http://localhost:3000。
 
+首页转到受保护的 `/dashboard`，未登录时跳至 `/sign-in`；注册入口为 `/sign-up`，无需登录的本地演示入口为 `/demo`。使用与已有 `BETTER_AUTH_URL` 相同的来源。
+
 ```bash
 npm run lint       # ESLint，任何警告也会导致检查失败
 npm run build      # 生产构建，同时检查 TypeScript
@@ -22,6 +24,7 @@ npm run typecheck  # 单独执行 TypeScript 检查
 npm run test:api   # HTTP 接口测试，需要先启动 Next.js 服务
 npm run test:db    # 认证/Repository 单元测试及数据库测试；未执行认证迁移时跳过真实 CRUD
 npm run test:auth  # 认证配置、授权边界单元测试，不连接数据库
+npm run test:auth:http # 真实认证及页面保护，需要运行本地服务器；自动清理唯一测试账号
 npm start          # 运行上一步构建的生产版本
 npm run prisma:validate # 离线校验 Prisma schema
 npm run prisma:generate # 只生成客户端，不创建数据库表
@@ -32,7 +35,7 @@ npm run prisma:generate # 只生成客户端，不创建数据库表
 - PostgreSQL 配置与字段说明见 [数据库说明](docs/database.md)；Repository、错误处理和集成测试见 [数据访问层说明](docs/repository.md)。认证配置、迁移审核和双用户测试见 [认证说明](docs/authentication.md)。
 - `prisma/schema.prisma`：Job、User、Session、Account、Verification 模型，状态枚举和索引。
 - `prisma.config.ts`：Prisma 7 CLI 配置，复用 Next.js 环境变量加载器读取 `.env.local`。
-- `prisma/migrations/`：保留已执行的首次迁移；新增待审核的认证/岗位归属迁移，未执行。
+- `prisma/migrations/`：首次和认证/岗位归属迁移均已执行，本阶段不修改历史文件。
 - `src/lib/auth.ts`、`auth-client.ts`：Better Auth 服务端延迟实例和同源 React 客户端。
 - `src/lib/session.ts`：读取可信服务端 Session，未登录时拒绝访问数据库岗位。
 - `src/lib/auth-config.ts`、`auth-schema.ts`、`auth-error.ts`：配置校验、只读结构检查及安全错误。
@@ -45,8 +48,16 @@ npm run prisma:generate # 只生成客户端，不创建数据库表
 - `tests/database.test.ts`：真实数据库与 CRUD、事务回滚清理、日期边界和连接失败测试。
 - `tests/job-repository.test.ts`：日期映射、输入校验和错误脱敏测试。
 - `tests/auth.test.ts`：未登录拒绝、所有者查询条件、伪造 userId 与配置脱敏测试。
+- `tests/auth-form.test.ts`：表单校验、友好错误和按实际 Session 导航测试。
+- `tests/auth-http.test.ts`：真实 HTTP 注册/登录/退出、旧 Cookie 撤销、保护页面和唯一账号清理。
 - `.env.example`：数据库地址、认证密钥及应用 URL 的占位示例，无真实凭据。
-- `src/app/page.tsx`：服务端页面入口，组合页面框架并将本地岗位数据传给交互组件。
+- `src/app/page.tsx`：首页转向账号工作空间。
+- `src/app/sign-in/page.tsx`、`sign-up/page.tsx`：动态认证页面，已登录时转工作空间。
+- `src/app/dashboard/page.tsx`：服务端校验 Session，展示姓名、邮箱、退出入口及岗位接入提示。
+- `src/app/demo/page.tsx`：保留旧页面、模拟初始数据和 localStorage 演示。
+- `src/components/auth/`：复用认证页面框架、注册/登录表单和退出按钮。
+- `src/lib/auth-form.ts`：表单类型、校验、白名单错误文案及固定站内导航逻辑。
+- `src/app/error.tsx`：安全的页面错误与重试，不显示服务端异常细节。
 - `src/app/layout.tsx`：全局 HTML 布局、中文语言设置和页面 metadata。
 - `src/app/globals.css`：Tailwind 入口、主题颜色、字体和键盘焦点样式。
 - `src/app/icon.svg`：本地站点图标，不依赖远程图片或字体。
@@ -180,6 +191,14 @@ npm run test:api
 项目已生成 `package-lock.json`，应与源码一起提交到版本控制。日常安装使用 `npm ci`；只有有意调整依赖时才使用 `npm install` 并检查锁文件变更。
 
 ## 本次环境的验证结果
+
+- 认证与初始数据库迁移均已执行；本阶段保留 Schema、服务端认证配置和全部迁移文件，未修改真实环境变量文件。
+- 注册、登录、受保护工作空间、退出及演示页已完成；lint、typecheck、生产构建全部通过。
+- test:db 为 22/22，原有 test:api 为 22/22，新增 test:auth:http 为 2/2，均无失败和跳过。
+- 真实 HTTP 与浏览器验证注册/登录、错误凭据、刷新会话、退出后旧 Cookie 失效和页面保护；独立测试账号均已清理。
+- 注册、登录及演示页在 320/375/768/1440px 无横向溢出；密码及认证会话不存入 localStorage。
+
+## 认证迁移准备阶段记录（历史）
 
 - Better Auth 阶段：jobs 只读计数为 0；新增迁移未执行，已执行的初始迁移及 lock 文件哈希保持不变。
 - 已锁定 Better Auth 与 Prisma adapter 为 1.7.25，保留 Prisma 7.10.1；schema 校验、Client 生成、lint、typecheck、build 全部通过。

@@ -98,7 +98,7 @@ export function JobDashboard({ initialJobs }: { initialJobs: readonly Job[] }) {
         <div className="flex flex-col gap-5 px-5 pt-6 pb-5 sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-7">
           <div>
             <h2 id="applications-heading" className="flex items-center gap-2.5 text-base font-semibold">
-              我的投递
+              演示投递
               <span className="rounded-md border border-line px-1.5 py-0.5 font-mono text-[10px] font-normal text-muted">{jobs.length}</span>
             </h2>
             <p className="mt-1.5 text-xs text-muted">每个机会，都值得认真记录。</p>

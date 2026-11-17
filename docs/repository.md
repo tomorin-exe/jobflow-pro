@@ -1,8 +1,8 @@
 # 岗位 Repository 与真实数据库验证
 
-当前连接是 PostgreSQL 18.7、`jobflow_db`、应用账号 `jobflow_app`。初始迁移已执行，新增认证和岗位归属迁移**尚未执行**。本阶段只读检查岗位数量为 0；没有分配或修改任何业务记录。迁移方案见 [认证说明](authentication.md)。
+当前连接是 PostgreSQL 18.7、`jobflow_db`、应用账号 `jobflow_app`。初始及认证/岗位归属迁移均已执行，本阶段只读确认 up to date，不修改 Schema 或迁移。认证页面已接入 Session，岗位业务记录未切换来源。见 [认证和页面说明](authentication.md)。
 
-页面仍使用 localStorage，`GET /api/jobs` 仍使用模拟数据。Repository 仅供服务端使用，尚未通过公开写接口暴露。
+`/demo` 使用 localStorage，`/dashboard` 显示受保护欢迎页，`GET /api/jobs` 仍使用模拟数据。Repository 仅供服务端使用，尚未通过公开写接口暴露。
 
 ## 数据流与文件职责
 
@@ -50,7 +50,7 @@ Prisma Client 是根据 schema 生成的类型安全查询工具，`job.findMany
 - 读取时通过 `toISOString().slice(0, 10)` 取 UTC 日期，不使用本地 `getDate()` 或本地化显示格式。
 - `createdAt` / `updatedAt` 是时间点，返回完整的 UTC ISO 字符串。原有前端 Job 接口保持不变。
 
-上一阶段的真实数据库测试已在两个时区通过。本阶段保留闰日、跨年、夏令时边界及 0001/9999 年用例，认证迁移完成后需再次运行。
+历史真实数据库测试已在两个时区通过。本阶段保留并通过闰日、跨年、夏令时边界及 0001/9999 年用例。
 
 ## 输入与错误处理
 
@@ -69,7 +69,7 @@ Prisma Client 是根据 schema 生成的类型安全查询工具，`job.findMany
 
 ## 运行数据库验证
 
-前提：PostgreSQL 已运行、`.env.local` 配置正确。测试首先只读检查认证表与 jobs.userId；未执行待审核迁移时明确跳过 5 项真实数据库测试，只运行 12 项单元测试（含 UUID/迁移一致性与真实 Adapter 离线测试）。测试不会自动执行迁移。迁移完成后，独立的 Repository 数据库测试不需要真实认证密钥或浏览器 Cookie，测试用户身份由受控事务夹具提供。
+前提：PostgreSQL 已运行、`.env.local` 配置正确，认证迁移已执行。测试首先只读检查认证表与 jobs.userId；缺少结构时明确跳过 5 项数据库测试，不自动迁移。结构就绪时运行 5 项真实数据库集成和 17 项单元测试，包含表单、UUID/迁移一致性与真实 Adapter 离线测试。独立的 Repository 测试不需要真实认证密钥或浏览器 Cookie，用户身份由受控事务夹具提供。
 
 ```powershell
 npm.cmd run test:db
@@ -99,9 +99,9 @@ npm.cmd run test:db
 
 ## 当前结果
 
-- `npm.cmd run test:db`：12 项单元测试通过，5 项真实数据库测试因待迁移明确跳过，无失败。
-- 这不是新结构的数据库验证通过；需要用户审核、执行迁移后重新运行。
-- 页面及模拟 GET API 数据来源未切换，也没有开放岗位写 API。
+- `npm.cmd run test:db`：22/22 通过，包括 5 项真实数据库集成，无失败或跳过。
+- 独立 `test:auth:http` 为 2/2，覆盖真实 Cookie 和认证 HTTP 生命周期；它精确清理唯一测试用户，不修改其他业务数据。
+- 岗位演示和模拟 GET API 数据来源未切换，也没有开放岗位写 API；工作空间已通过服务端 Session 保护。
 
 ## 上一阶段结果（历史）
 

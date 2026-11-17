@@ -1,6 +1,6 @@
 # PostgreSQL 与 Prisma
 
-**初始迁移已执行；新增 Better Auth / 岗位归属迁移待审核，尚未执行。** 本阶段只读检查 `jobs` 数量为 **0**，没有删除、更新或分配业务记录。schema 描述的是审核后的目标结构，当前物理库仍是初始结构。页面和模拟 API 保持原样。详见 [认证和迁移说明](authentication.md)、[Repository 与数据库测试](repository.md)。
+**初始及 Better Auth / 岗位归属迁移均已执行，当前只读迁移检查为 up to date。** 注册、登录、退出和服务端保护页面已接入认证，岗位演示在 `/demo`，模拟 API 仍不读取业务库。本阶段不修改 Schema、迁移或真实环境变量文件。详见 [认证和页面说明](authentication.md)、[Repository 与数据库测试](repository.md)。
 
 ## 版本与配置选择
 
@@ -50,7 +50,7 @@ Prisma 模型名为 `Job`，通过 `@@map("jobs")` 对应数据库表 `jobs`。�
 | `notes` | `String` / `VARCHAR(2000)` | 备注，默认空字符串，与现有可选备注一致 |
 | `createdAt` | `DateTime` / `TIMESTAMPTZ(3)` | 创建时刻，数据库默认当前时间，毫秒精度 |
 | `updatedAt` | `DateTime` / `TIMESTAMPTZ(3)` | 创建时默认当前时间，Prisma 更新时由 `@updatedAt` 自动维护 |
-| `userId`（待迁移） | `String?` / 可空 `UUID` 外键 | 关联 `User.id`；过渡期保留无归属记录，服务端不会向用户显示这些记录 |
+| `userId` | `String?` / 可空 `UUID` 外键 | 关联 `User.id`；过渡期保留无归属记录，服务端不会向用户显示这些记录 |
 
 `NOT NULL` 不等于字符串必须有文字，空白校验仍应复用 `src/lib/jobs.ts`。`uuid()` 是 Prisma 侧默认值，因此 SQL 中主键没有数据库 UUID 默认表达式；直接写 SQL 时需自己提供 UUID。`@updatedAt` 也不是数据库触发器，绕过 Prisma 更新时需要自行维护该字段。
 
@@ -74,7 +74,7 @@ node node_modules/prisma/build/index.js migrate diff --from-empty --to-schema pr
 
 初始 SQL 以空模型为基线，现有库已经完成该迁移，不应再次手工执行建表 SQL。今后需要变更模型时应另建迁移，不修改已经执行的历史文件。
 
-本阶段没有执行迁移、重置或结构推送，没有导入种子数据；由于认证结构尚未应用，真实数据库写入测试当前明确跳过。历史 CRUD 测试使用独立事务并回滚；新增隔离测试也采用此方式，待审核后运行。模拟 ID 如 `job-001` 不是 UUID，不能原样作为数据库 UUID 导入；未来切换数据来源仍需单独设计导入与归属确认。
+本阶段没有执行迁移、重置或结构推送，也没有导入种子数据。认证结构已应用，真实 CRUD 和隔离测试使用独立事务并回滚；认证 HTTP 测试仅创建并精确清理唯一测试用户。模拟 ID 如 `job-001` 不是 UUID，不能原样作为数据库 UUID 导入；未来切换数据来源仍需单独设计导入与归属确认。
 
 ## 服务端 Client
 

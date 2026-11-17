@@ -13,10 +13,10 @@ export function Sidebar() {
       </a>
 
       <nav aria-label="主导航" className="ml-auto flex items-center pr-5 lg:mt-6 lg:ml-0 lg:block lg:px-4">
-        <p className="mb-3 hidden px-4 text-[10px] font-semibold tracking-[0.18em] text-muted lg:block">工作空间</p>
+        <p className="mb-3 hidden px-4 text-[10px] font-semibold tracking-[0.18em] text-muted lg:block">本地演示</p>
         <a href="#main-content" aria-current="page" className="flex items-center gap-3 rounded-lg bg-brand-light px-3 py-2.5 text-sm font-semibold text-brand lg:px-4 lg:py-3">
           <Icon name="grid" className="hidden size-[18px] sm:block" />
-          <span>投递总览</span>
+          <span>演示投递</span>
           <span className="ml-auto hidden size-1.5 rounded-full bg-brand lg:block" />
         </a>
       </nav>

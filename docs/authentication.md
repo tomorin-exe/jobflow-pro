@@ -1,177 +1,144 @@
-# Better Auth 认证、岗位归属与待审核迁移
+# 注册、登录、会话与岗位归属
 
-本阶段已经准备认证服务、客户端调用入口和岗位授权边界，**尚未执行新迁移**。只读检查 `jobs` 为 **0 条**，没有删除、修改或自动分配任何业务记录。Dashboard 继续使用 localStorage，`GET /api/jobs` 继续返回模拟数据；没有新增岗位写 API，也没有新增登录页面。
+认证迁移已经由用户执行完成，本阶段只读确认数据库已是最新状态。实际安装 Better Auth / Prisma Adapter **1.7.25**，Prisma **7.10.1**，Next.js **16.4.6**。本阶段没有修改认证服务配置、Schema、已执行迁移或真实环境变量文件，没有新增依赖或岗位数据库写 API。
 
-## 版本与官方依据
+## 页面与数据来源
 
-实际安装并精确锁定 `better-auth@1.7.25`、`@better-auth/prisma-adapter@1.7.25`，保留 Prisma CLI / Client / PostgreSQL adapter `7.10.1`，不混入 Prisma 8 的配置。
+| 地址 | 行为 |
+| --- | --- |
+| / | 转到 /dashboard，由受保护页面决定是否需要登录 |
+| /sign-up | 姓名、邮箱、密码、确认密码注册；已登录用户转到 /dashboard |
+| /sign-in | 邮箱密码登录；已登录用户转到 /dashboard |
+| /dashboard | 服务端验证 Session，匿名或失效会话重定向 /sign-in；显示姓名、邮箱、退出按钮和“岗位数据库接入中” |
+| /demo | 公开的 localStorage 岗位管理演示，明确提示不属于任何登录账号 |
+| /api/auth/* | 复用现有 Better Auth GET/POST Handler |
+| /api/jobs | 仍为模拟数据 GET API，没有切换到数据库 |
 
-- [Better Auth Prisma adapter](https://better-auth.com/docs/adapters/prisma)：当前指南针对 Prisma 7 + PostgreSQL，使用独立的 `@better-auth/prisma-adapter`。
-- [Prisma 官方 Better Auth + Next.js 指南](https://www.prisma.io/docs/guides/authentication/better-auth/nextjs)：目前采用 Prisma 7；Prisma 8 的客户端 API 不同。
-- [Better Auth 核心数据模型与 UUID 配置](https://better-auth.com/docs/concepts/database)：User、Session、Account、Verification 及 `generateId: "uuid"`。
-- [Better Auth Next.js 集成](https://better-auth.com/docs/integrations/next)：App Router catch-all Route Handler、React client、服务端 Session 获取。
-- [邮箱密码认证](https://better-auth.com/docs/authentication/email-password)：注册、登录、退出交给库处理。
-- [Next.js 认证指南](https://nextjs.org/docs/app/guides/authentication)：在可信服务端数据访问层校验会话和权限。
+/demo 复用原来的组件、存储键、CRUD、筛选、搜索和排序。移动页面路径不会更改同一浏览器来源下的 localStorage；登录和退出也不会导入、删除或转移演示记录。它们不能冒充当前用户的私人岗位。
 
-## 认证架构与数据流
+## 客户端认证、Cookie 与服务端会话
 
 ```text
-浏览器 authClient.signUp.email / signIn.email / signOut / getSession
-    → 同源 /api/auth/[...all] (GET / POST)
-    → 检查认证表结构、读取私密配置
-    → Better Auth → Prisma Adapter → 现有 Prisma Client → PostgreSQL
-    → Better Auth 管理 Session 和 Cookie
+AuthForm → authClient.signUp.email / signIn.email
+         → /api/auth/* → Better Auth → Prisma Adapter → PostgreSQL
+         ← Better Auth 设置 HttpOnly 会话 Cookie
+         → authClient.getSession() 确认实际会话
+         → 完整导航到 /dashboard
 
-服务端岗位方法
-    → requireUserId() → await headers() → Better Auth 验证 Session
-    → Repository 强制 userId 条件 → Prisma → 当前用户的岗位
+/dashboard（Server Component）
+         → getCurrentSession() → await headers()
+         → Better Auth api.getSession({ headers })
+         → 校验数据库 Session
+         → 无会话则 redirect("/sign-in")，有效才渲染用户信息
+
+SignOutButton → authClient.signOut()
+              → Better Auth 撤销 Session、清理 Cookie
+              → getSession() 确认退出 → 完整导航到 /sign-in
 ```
 
-服务端模块均使用 `server-only`。认证实例延迟初始化，复用已有 `getPrisma()` 单例，因此 build、Dashboard 和模拟 API 不要求认证密钥，也不连接认证表。`auth-client.ts` 只导入 Better Auth 的 React 客户端，不导入 Prisma。当前没有调用会写 Cookie 的 Server Action，因此不需要 `nextCookies` 插件；Cookie 由认证 HTTP Handler 处理。以后改用此类 Server Action 时按官方文档补充插件。
+- **客户端认证调用**负责收集表单、显示加载状态和错误、请求认证服务。客户端的成功状态不能决定服务端访问权限。
+- **Cookie**由浏览器按来源和 Cookie 属性自动随请求发送。HttpOnly 会话 Cookie 不提供给前端 JavaScript 直接读取；项目不自行把密码、Session 或访问令牌存入 localStorage。
+- **服务端 Session 校验**由 Better Auth 根据请求头中的 Cookie 校验数据库会话及有效期。仅存在 Cookie 不代表已登录。现有配置关闭 Cookie 会话缓存，退出后重放旧 Cookie 也应失效。
 
-`readSession()` 在没有 Cookie 时返回 null；有 Cookie 时必须由 Better Auth 查询并校验 Session，不能仅凭 Cookie 存在就认为已登录。已关闭会话 Cookie 缓存；有效性以库的数据库会话检查为准。会话不存在时 `requireUserId()` 抛出 401。服务不可用、缺少配置或迁移未完成时安全失败，不退回无用户过滤的查询。
+服务端使用已有 getCurrentSession，不复制另一套认证实现。该方法把 headers() 放在错误包装之外，让 Next.js 的动态渲染控制异常回到框架；认证配置与数据库错误仍由 readSession 脱敏。三个认证相关页面显式动态渲染，不在 build 时查询用户 Session。没有用 Proxy、useSession 或 Cookie 是否存在代替服务器授权。
 
-注册和登录通过 Better Auth 的邮箱密码功能完成，密码哈希、验证和会话令牌全部由库处理。`Account.password` 保存库产生的哈希，不是明文。当前用于本地学习，没有配置邮件发送、邮箱验证流程或密码找回；`emailVerified` 的存在不表示已完成邮箱验证。正式对外开放前需单独完成这些产品与运维配置。
+登录/退出使用完整站内导航重新请求服务器，避免沿用认证前的 Router 缓存。会话对象和令牌不会作为 Client Component props 传递，工作空间只渲染当前用户姓名、邮箱。
 
-## 新旧结构对比
+## 表单与错误处理
 
-| 结构 | 当前已执行的初始结构 | 待审核迁移后的目标 |
-| --- | --- | --- |
-| `jobs` | 原有业务字段、UUID 主键和两个索引 | 原字段不变，增加可空 UUID `userId`、User 外键及两个用户查询索引 |
-| `users` | 无 | User 认证身份，每个用户有多个岗位、会话和账号 |
-| `sessions` | 无 | 数据库会话、唯一 token、有效期、用户外键 |
-| `accounts` | 无 | 邮箱密码或未来外部提供方的账号信息、密码哈希 |
-| `verifications` | 无 | 库使用的验证标识、值和有效期；目前未配置邮件流程 |
+共用 AuthForm，根据 mode 展示注册或登录字段：
 
-字段说明（数据库名称通过 `@@map` 使用小写复数，Prisma delegate 仍是 `user` 等）：
+- 注册要求姓名、有效邮箱、8–128 字符密码及一致的确认密码；姓名去首尾空白后最多 100 字符，邮箱最多 254 字符。
+- 登录校验邮箱及非空密码，不要求姓名和确认密码。密码从不 trim，确认密码只在浏览器校验，不发送到认证 API。
+- 客户端校验改善体验；实际账户创建和密码校验仍由 Better Auth 在服务器执行，不能依赖浏览器校验作为安全边界。
+- 错误字段关联 aria-describedby 和 aria-invalid，提交错误后聚焦首个错误字段。请求期间禁用字段和按钮，并用 ref 阻止连续重复提交。
+- 注册成功后再查询实际 Session：有效会话去 /dashboard；没有会话去 /sign-in?registered=1。后者只提示“注册请求已完成”，不把 URL 参数当作已创建账号的凭证。
+- 错误密码及不存在的账号使用相同提示。UI 只映射已知错误码和状态，不回显服务端 message、密码、连接串或底层异常。认证服务故障显示安全提示；服务端渲染失败由通用 error.tsx 提供重试。
+- 注册、登录、退出继续使用官方 authClient；没有自行实现密码加密或会话机制。
 
-| 模型 | 字段及作用 |
+本阶段没有加入邮箱验证邮件、密码找回或社交登录，保留现有 Better Auth 服务端配置。
+
+## 数据模型与所有者
+
+| 模型 | 用途 |
 | --- | --- |
-| User | `id` UUID 主键；`name` 显示名称；`email` 唯一邮箱；`emailVerified` 默认 false；`image` 可空头像 URL；`createdAt` / `updatedAt` 创建及修改时刻 |
-| Session | `id` UUID；`userId` UUID 所属用户；`token` 唯一会话令牌；`expiresAt` 到期时刻；可空 `ipAddress` / `userAgent` 请求信息；创建/修改时刻 |
-| Account | `id` UUID；`userId` UUID；`accountId` 提供方账号标识；`providerId` 提供方；可空 `password` 为库管理的密码哈希；可空 accessToken / refreshToken / idToken、访问/刷新令牌有效期和 scope 供未来 OAuth 使用；创建/修改时刻 |
-| Verification | `id` UUID；`identifier` 验证用途标识；`value` 库管理的验证值；`expiresAt` 到期时刻；创建/修改时刻 |
-| Job 新字段 | `userId` 可空 UUID，与 User.id 类型完全一致；`user` 为 Prisma 关系字段，不额外创建数据库列 |
+| User / users | UUID 身份、姓名、唯一邮箱、emailVerified、可空 image、创建/更新时间 |
+| Session / sessions | UUID、用户外键、唯一 token、expiresAt、可空 IP/User-Agent、时间戳 |
+| Account / accounts | UUID、用户外键、providerId/accountId、库管理的密码哈希及可空 OAuth 令牌字段 |
+| Verification / verifications | UUID、identifier、value、expiresAt、createdAt、updatedAt |
+| Job / jobs | 原业务字段及可空 UUID userId，关联 User；未归属记录对普通用户不可见 |
 
-所有认证时间点使用 `TIMESTAMPTZ(3)`；岗位投递日期仍是 `DATE`，原有 UTC 映射不变。Better Auth 使用 `advanced.database.generateId: "uuid"`，当前 PostgreSQL Adapter 会把四张认证表的 ID 生成交给数据库。因此认证模型使用 `@default(dbgenerated("gen_random_uuid()")) @db.Uuid`，对应 SQL 明确包含 `DEFAULT gen_random_uuid()`。岗位 ID 仍保留原有 Prisma `uuid()`，不修改已执行的初始迁移。邮箱、Session token 和 `(providerId, accountId)` 有唯一约束；用户外键和过期清理字段有索引。
+认证 UUID 使用 PostgreSQL 内置 gen_random_uuid()：Schema 的 @default(dbgenerated("gen_random_uuid()")) 与 SQL DEFAULT 一致。Better Auth 配置保留 generateId: "uuid"；当前 PostgreSQL Adapter 可以省略插入 ID，由数据库默认值负责。Job ID 保留已有 Prisma uuid()。Verification.updatedAt 已存在并与模型一致。
 
-## 最终迁移审查
+Adapter 使用单数 user/session/account/verification delegate，Prisma @@map 映射到复数数据库表；不把 modelName 设为数据库复数表名。Job → User 使用 RESTRICT，避免删用户时连带删除岗位；认证 Session/Account 使用 CASCADE。
 
-本次只读检查迁移历史中认证迁移记录为 0，才修改待执行 SQL；历史初始迁移及锁文件哈希未变，初始迁移文件 checksum 也与数据库记录匹配。岗位计数仍为 0。已检查新表/索引名称和 jobs.userId 没有冲突，应用账号具备本次建表和修改 jobs 的权限；未修改任何权限。使用原始 schema 到当前 schema 的离线 Prisma diff 核对，除注释与 BEGIN / COMMIT 包装外，与待执行 SQL 完全一致，没有连接影子库或应用 SQL。
+所有业务岗位 Repository 操作从 requireUserId() 的可信服务端 Session 获取所有者：
 
-### UUID 生成责任
+- 列表使用 where: { userId }。
+- 单条读取、修改、删除在同一条操作中使用 where: { id, userId }；不存在和他人记录均返回 null。
+- 新增时显式添加服务端 userId，修改字段白名单排除所有者，客户端额外 userId 无效。
+- 工厂注入的身份函数仅供可信服务端测试使用，不能从 HTTP 参数接受用户 ID。
 
-`@default(uuid())` 是 Prisma 层默认值，不会在 PostgreSQL 建表 SQL 中生成默认表达式，不能当作数据库默认值。[Prisma 7 官方说明](https://www.prisma.io/docs/orm/v7/reference/prisma-schema-reference#uuid)明确区分两者。[Better Auth UUID 文档](https://better-auth.com/docs/concepts/database#uuids)及本机 1.7.25 Adapter 源码确认 PostgreSQL 原生 UUID 模式通常省略插入的 ID。
+可空 userId 保留历史数据兼容性。无法证明归属的记录不能自动分配给首个注册用户；以后审核确认无空值及旧写入者后，另建 NOT NULL 迁移。此阶段没有将工作空间接入岗位 CRUD。
 
-因此四张认证表采用数据库生成策略，原有 `generateId: "uuid"` 无需改成自行生成 ID 的回调。PostgreSQL 18 内置 [gen_random_uuid()](https://www.postgresql.org/docs/18/functions-uuid.html)，不需要安装扩展或管理员权限。本机只读调用验证了 20 个有效且互不相同的 v4 UUID，没有创建任何记录；这不等同于已经测试新表插入。
+## 已执行迁移
 
-新增离线测试直接使用生产配置工厂和真实 Better Auth Adapter，在进入 Prisma delegate 时拦截写入，确认 user / session / account / verification 四条路径都省略 ID，并验证 Schema 和 SQL 均提供相应默认值。测试不伪造数据库插入已成功的结论。
+两个迁移都已应用。当前只读 migrate status 为 up to date；原 Schema、服务端认证配置及所有迁移文件的哈希与本阶段开始一致。不要重写历史迁移、重复手工建表、执行 reset 或结构推送。后续结构变化另建迁移。
 
-### Verification 和名称映射
+## 运行与测试
 
-当前 `verifications` 的建表 SQL **已经包含** `updatedAt TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP`，与模型的 `@default(now()) @updatedAt` 及 Better Auth 1.7.25 的创建/更新行为一致，无需重复添加。回归测试覆盖所有认证表时间戳，尤其 Verification.updatedAt。
+保持现有 .env.local 私密，程序不会打印或修改它。BETTER_AUTH_URL 应与浏览器使用的协议、主机和端口一致；本地通常统一使用 http://localhost:3000，不混用 localhost 与 127.0.0.1。服务端密钥和 DATABASE_URL 不使用 NEXT_PUBLIC_ 前缀。
 
-配置保留 Adapter 的 `usePlural: false` 默认值；Better Auth model 名为 user / session / account / verification，对应 Prisma 单数 delegate。Prisma 的 `@@map` 再映射到 users / sessions / accounts / verifications。不能把 modelName 改为数据库复数表名，否则 Adapter 会寻找不存在的 `prisma.users` 等属性。
-
-### Job.userId 的选择
-
-| 方案 | 优点 | 代价 |
-| --- | --- | --- |
-| 现在设置 NOT NULL | 数据库立即拒绝无归属岗位；当前空表容易实施 | 审核后若出现旧记录会导致迁移失败；需要重写保留无归属记录的兼容测试和迁移约定 |
-| 保留可空扩展（本次选择） | 不误分配旧数据；兼容当前无归属隔离测试；迁移时即使出现记录也保留 | 数据库层暂时不能阻止绕过 Repository 写入无归属记录，后续需审计并收紧 |
-
-可空不代表普通用户可以创建无归属岗位。生产 Repository 的创建、读取、更新、删除仍全部从可信服务端 Session 确定 userId，输入白名单排除所有者字段；没有会话就拒绝，无归属记录对所有普通用户不可见。测试工厂的用户解析函数只用于可信服务器测试，不能接受客户端用户 ID。未来确认无未归属数据、无旧写入者后，另建 NOT NULL 迁移，不改历史文件。
-
-## 待审核 SQL：只准备，不执行
-
-完整文件：[20261116211821_better_auth_job_ownership/migration.sql](../prisma/migrations/20261116211821_better_auth_job_ownership/migration.sql)。它通过旧 schema 到新 schema 的离线 diff 生成，不连接影子数据库，也不应用 SQL。已执行的初始迁移及 migration_lock 未修改。
-
-SQL 的操作顺序为：
-
-1. `BEGIN` 开始事务。
-2. `ALTER TABLE "jobs" ADD COLUMN "userId" UUID`，可空、无默认用户，不回填记录。
-3. 创建 users、sessions、accounts、verifications 四张表及其主键，四个 UUID 主键均有 `DEFAULT gen_random_uuid()`。
-4. 创建邮箱、token、账号的唯一索引，认证查询索引，以及两个岗位所有者复合索引。
-5. 建立 jobs → users 的 `ON DELETE RESTRICT` 外键；sessions / accounts → users 使用 `ON DELETE CASCADE`。
-6. `COMMIT`。任何一步失败，PostgreSQL 事务会整体回滚。
-
-没有 DELETE、TRUNCATE、DROP 或业务数据 UPDATE。User 删除被岗位外键限制，避免删除账号时连带删除岗位；Session / Account 的级联只处理该用户的认证记录。当前没有公开删除用户的功能。
-
-即使岗位数量当前为 0，也选择可空扩展：审核到执行之间可能有其他工具写入记录。若到时出现旧记录，它们保持 `userId = NULL`，不会自动归给第一个注册用户或任意用户，也不会被 Repository 暴露。
-
-如果以后需要接管无归属数据，应先备份并核对数量、确认真实所有者，形成按“岗位 UUID → 已验证 User UUID”的人工审核映射；再准备单独的、精确到指定 UUID、可审查的事务回填。无法证明归属的记录继续保留但不可见，不能以“当前登录用户”为依据批量接管。审计确认无空值后，再准备新的 NOT NULL 迁移。本文件不包含回填或收紧约束。
-
-风险：DDL 会锁定相关表，普通索引创建和外键检查在大表上可能阻塞写入；执行前需重新确认数据量、安排适当窗口。若库中已存在同名表、索引或列，迁移会失败，必须先调查，不能重置或强行推送。新代码和新 Client 依赖新字段，部署时需协调迁移顺序。可空列是过渡约束，可信服务端写入口必须持续强制所有者，不允许直接暴露通用 Prisma 写接口。
-
-## 需要用户手动完成的步骤
-
-1. 审核 schema 和完整 SQL；确认连接指向 `jobflow_db` / `jobflow_app`，自行备份并再次检查岗位数量。不要重新执行初始建表 SQL。
-2. 在现有 `.env.local` **追加** `BETTER_AUTH_SECRET`（本地随机生成、至少 32 字符）和 `BETTER_AUTH_URL="http://localhost:3000"`。保留现有 DATABASE_URL，不要用示例覆盖整个文件，也不要提交或向聊天粘贴秘密。示例占位密钥会被代码拒绝；不要使用 NEXT_PUBLIC_ 前缀。
-3. URL 必须与浏览器来源一致（协议、主机、端口）；本地统一用 localhost:3000，勿混用 127.0.0.1。生产环境必须使用 HTTPS。更改配置后重启 Next.js。
-4. **只有审核并决定执行后**，由用户在项目根目录运行以下命令；本次开发没有运行它：
-
-   ```powershell
-   npm.cmd exec -- prisma migrate deploy
-   npm.cmd exec -- prisma migrate status
-   npm.cmd run prisma:generate
-   ```
-
-   deploy 根据迁移历史只应用未执行迁移，不会再次创建已成功应用的初始表。若执行失败，先分析安全的本地诊断，不修改旧迁移、权限或管理员配置来掩盖问题。
-
-5. 运行 lint、typecheck、build、数据库测试，并按需要在上海和洛杉矶时区分别运行 `test:db`。启动 Next.js 后运行原有 `test:api`。
-
-认证调用入口已准备，未来 Client Component 可以直接使用（这些是说明，不会自动执行）：
-
-```ts
-import { authClient } from "@/lib/auth-client";
-
-// name / email / password 来自用户表单，不要将密码写入源码或日志。
-const registration = await authClient.signUp.email({ name, email, password });
-const login = await authClient.signIn.email({ email, password });
-const session = await authClient.getSession();
-const logout = await authClient.signOut();
-// 使用返回值的 error 处理失败；React 中也可用 authClient.useSession()。
+```powershell
+npm.cmd run lint
+npm.cmd run typecheck
+npm.cmd run build
+npm.cmd run test:db
+npm.cmd start
 ```
 
-本阶段不新增用户表单，也不导入 localStorage 岗位到数据库。localStorage 仍属于同一浏览器来源，不具备按账户隔离能力；不能用当前 Dashboard 验证数据库的用户隔离。
+保持服务器运行，在另一个终端执行：
 
-## 岗位权限边界
+```powershell
+$env:API_BASE_URL = "http://localhost:3000"
+npm.cmd run test:api
+npm.cmd run test:auth:http
+```
 
-默认 Repository 的五个方法都先调用 `requireUserId()`，身份只来自服务端验证后的 Session：
+test:auth:http 只允许本地服务器，先核对应用数据库和账号，再创建一个唯一测试邮箱。它通过真实 HTTP 验证注册、登录、HttpOnly Cookie、工作空间保护、错误凭据及退出后旧 Cookie 失效。finally 只按本次随机邮箱/UUID 清理该测试 User，其 Session/Account 随外键清理，不写岗位，也不清理其他用户。不要把 API_BASE_URL 指向日常生产服务。
 
-- 列表：`where: { userId }`，不支持客户端指定用户。
-- 单条读取 / 修改 / 删除：`where: { id, userId }`，在同一条操作中限制所有者；不存在或属于他人均返回 null。
-- 新增：显式业务字段白名单加服务端 userId，额外 body.userId 被忽略。
-- 修改：白名单排除 userId，不能转移所有者。
-- 未登录：401；认证表未就绪或连接异常：安全错误，不返回底层异常和连接串。
+数据库测试在独立事务中创建用户和岗位，并回滚所有写入；表单和授权单元测试不写数据库。认证 HTTP 测试与数据库事务测试分别运行。
 
-测试工厂允许注入“可信用户解析函数”和事务 Client，仅用于服务端测试夹具。不得把 HTTP 参数中的用户 ID 注入工厂。未来所有岗位 HTTP/Server Action 入口必须使用默认 Repository，并把 null 映射为不泄露他人记录存在性的 404；不能只在页面导航或 Proxy 中判断是否有 Cookie。数据库管理员脚本和直接 Prisma 调用仍需单独权限审核。
+本次结果：
 
-## 验证结果与双用户测试
-
-当前 `npm.cmd run test:db`：**12 项单元测试通过、5 项数据库集成测试跳过、0 失败**。包含本次增加的 UUID/字段一致性和真实 Adapter 离线测试。跳过原因是本次不允许执行新迁移，新 Client 查询 jobs 会涉及尚不存在的 userId；不能宣称数据库新结构 CRUD 已验证成功。此前的双时区 9/9 是上一阶段结果。
-
-本次已执行的其他检查：
-
-| 检查 | 实际结果 |
+| 检查 | 结果 |
 | --- | --- |
-| `npm.cmd run lint` | 通过，0 警告 |
-| `npm.cmd run typecheck` | 通过 |
-| `npm.cmd run build` | 通过，包含 Prisma Client 生成，认证路由构建成功 |
-| `npm.cmd run prisma:validate` | 通过 |
-| `npm.cmd run test:api` | 在独立端口生产服务上 22/22 通过，原有测试未修改 |
-| 认证 HTTP 入口 | GET get-session、POST 空 sign-up/email 均返回 503 / AUTH_MIGRATION_REQUIRED，无认证写入 |
-| `prisma migrate status`（只读） | 退出码 1，明确报告只有新增认证迁移待应用；符合本次要求 |
-| 业务数据和历史文件 | jobs 复查仍为 0；初始 migration.sql 与 migration_lock 的哈希未变；.env.local 被 Git 忽略 |
+| lint / typecheck / build | 全部通过 |
+| test:db | 22/22 通过，含 5 项真实数据库集成，无跳过 |
+| 原有 test:api | 22/22 通过，测试文件及模拟 API 未修改 |
+| test:auth:http | 2/2 通过，唯一测试账号已精确清理 |
+| 浏览器交互 | 必填、邮箱/密码/确认校验、提交禁用、真实注册、登录错误、刷新保持会话、退出与保护路由通过 |
+| 浏览器存储 | 没有新增认证 localStorage 项；独立 UI 测试账号已清理 |
+| 演示 CRUD | 手机新增、搜索、编辑回填/保存、刷新持久化、删除取消/确认及刷新验证通过 |
+| 响应式 | 注册、登录、演示页在 320/375/768/1440px 无横向溢出 |
 
-真实注册、密码登录、注销和 Cookie Session 的端到端验证尚未执行，因为它们需要新认证表及本地密钥配置；这不是已经通过的测试。
+测试使用独立 3017 端口，仅为测试进程指定同源 BETTER_AUTH_URL，没有改动真实环境变量文件、数据库 URL 或密钥。真实 Cookie 和密码不写入测试日志或文档。
 
-准备的数据库隔离用例在迁移后自动运行：事务内创建 A/B 两个唯一测试 User、各自岗位和一个无归属夹具，验证互不可见、跨用户更新/删除无效、伪造 userId 被忽略，最后回滚并核对这些测试 UUID 无残留。它验证真实 Repository / PostgreSQL，不验证 Better Auth 的浏览器登录链路。
+## 手动验收
 
-后续完整手动验收：
+1. 退出状态打开 /dashboard，应跳到 /sign-in；/demo 仍可公开访问并显示演示标识。
+2. 在 /sign-up 提交空表单、非法邮箱、短密码、不一致确认密码，应阻止提交并提示。使用测试邮箱完成注册，按钮请求期间禁用，按实际会话进入工作空间或登录页。
+3. 退出后尝试错误密码和不存在账号，均显示友好提示；正确登录后显示自己的姓名与邮箱，刷新仍保持登录。
+4. 点击退出，重新访问 /dashboard 不能看到工作空间。开发者工具中不应出现自行保存的密码或认证 localStorage 项。
+5. 在 /demo 新增/修改一条演示岗位，刷新确认保留；登录/退出不应把它带入 /dashboard。“岗位数据库接入中”始终明确可见。
 
-1. 迁移及配置完成后，用两个独立浏览器配置或普通/隐私窗口，通过接入的认证表单或客户端入口分别注册并登录 A/B。检查 Session 返回不同 UUID；退出后 getSession 应为空，未登录岗位请求应拒绝。错误密码不能登录。
-2. 通过以后新增的受保护岗位入口（或受控服务端测试）分别创建 A1/B1。A 只能列出 A1，B 只能列出 B1。以 B 的会话请求 A1 UUID 的读、改、删，均应返回不存在且 A1 保持不变；反向同样验证。请求体伪造 userId 不能新增给对方，也不能转移已有岗位。
-3. 验证无归属岗位双方都不可见；会话到期/注销后旧会话不能继续操作。刷新后数据库岗位仍存在。同一浏览器的 localStorage 不属于上述测试范围。
+数据库双用户隔离已由 Repository 事务测试验证；跨会话岗位 HTTP CRUD 验收仍留到受保护岗位接口接入阶段。不要为测试临时开放未经授权的数据库写接口。
 
-当前没有岗位数据库 HTTP CRUD，因此以上跨会话 HTTP 验收需留到受保护接口接入阶段。现阶段不要为测试临时开放未授权接口。真实注册/登录写入也等待本次迁移经用户审核执行后再验证。
+## 官方参考
+
+- [Better Auth Next.js 集成](https://better-auth.com/docs/integrations/next)
+- [邮箱密码认证](https://better-auth.com/docs/authentication/email-password)
+- [Cookie 与 Session](https://better-auth.com/docs/concepts/session-management)
+- [Prisma Adapter](https://better-auth.com/docs/adapters/prisma)
+- [Prisma 7 UUID 默认值](https://www.prisma.io/docs/orm/v7/reference/prisma-schema-reference#uuid)
+- [Next.js 认证和数据访问层](https://nextjs.org/docs/app/guides/authentication)
